@@ -3,18 +3,25 @@
   "version": "0.1.0",
   "description": "Compile-time macro parser combinators with optimized output",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.cjs"
     },
     "./plugin": {
+      "types": "./dist/plugin/index.d.ts",
       "import": "./dist/plugin/index.js",
-      "types": "./dist/plugin/index.d.ts"
+      "require": "./dist/plugin/index.cjs"
     }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "vitest run",
