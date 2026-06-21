@@ -5,7 +5,7 @@ import { any, fromRange, union, empty } from './first-set.ts'
 function firstSetFromRegex(pattern: string): { firstSet: FirstSet; canMatchNewline: boolean } {
   try {
     const ast = regexpTree.parse(`/${pattern}/`)
-    return extractFirstSet(ast.body)
+    return extractFirstSet(ast.body as unknown as RegexNode)
   } catch {
     return { firstSet: any(), canMatchNewline: true }
   }
@@ -84,22 +84,23 @@ function extractFirstSet(node: RegexNode | null | undefined): { firstSet: FirstS
   }
 }
 
+function optimizeRegex(source: string, flags: string): string {
+  try {
+    const result = regexpTree.optimize(`/${source}/${flags}`)
+    const str = result.toString()
+    const lastSlash = str.lastIndexOf('/')
+    return str.slice(1, lastSlash)
+  } catch {
+    return source
+  }
+}
+
 export function regex(pattern: string | RegExp, flags = ''): Parser<string> {
   const source = typeof pattern === 'string' ? pattern : pattern.source
   const resolvedFlags = typeof pattern === 'string' ? flags : pattern.flags
 
-  // Optimize via regexp-tree
-  let optimized: RegExp
-  try {
-    const result = regexpTree.optimize(`/${source}/${resolvedFlags}`)
-    optimized = new RegExp(result.toString().slice(1, result.toString().lastIndexOf('/')),
-      result.toString().slice(result.toString().lastIndexOf('/') + 1))
-  } catch {
-    optimized = new RegExp(source, resolvedFlags)
-  }
-
-  // Anchor to current position
-  const anchored = new RegExp(optimized.source, 'y' + optimized.flags.replace(/[gy]/g, ''))
+  const optimizedSource = optimizeRegex(source, resolvedFlags)
+  const anchored = new RegExp(optimizedSource, 'y' + resolvedFlags.replace(/[gy]/g, ''))
 
   const { firstSet, canMatchNewline } = firstSetFromRegex(source)
   const meta: ParserMeta = { firstSet, canMatchNewline, isTrivia: false }
@@ -107,6 +108,7 @@ export function regex(pattern: string | RegExp, flags = ''): Parser<string> {
   return {
     _tag: 'regex',
     _meta: meta,
+    _def: { tag: 'regex', source, flags: resolvedFlags, optimizedSource },
     parse(input: string, pos: number, _ctx: ParseContext): ParseResult<string> {
       anchored.lastIndex = pos
       const m = anchored.exec(input)

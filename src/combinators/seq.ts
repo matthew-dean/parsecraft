@@ -1,4 +1,4 @@
-import type { Parser, ParseContext, ParseResult, ParserMeta } from '../types.ts'
+import type { Parser, ParseContext, ParseResult, ParserMeta, ParseFail } from '../types.ts'
 import { empty } from './first-set.ts'
 
 type UnwrapParsers<T extends Parser<unknown>[]> = {
@@ -17,18 +17,19 @@ export function seq<T extends [Parser<unknown>, ...Parser<unknown>[]]>(
   return {
     _tag: 'seq',
     _meta: meta,
+    _def: { tag: 'seq', parsers: parsers as Parser<unknown>[] },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<UnwrapParsers<T>> {
       const values: unknown[] = []
       let cur = pos
 
-      for (const parser of parsers) {
-        // skip trivia between terms if configured
-        if (ctx.trivia && cur > pos) {
+      for (let i = 0; i < parsers.length; i++) {
+        // skip trivia between terms (not before the first)
+        if (ctx.trivia && i > 0) {
           const tr = ctx.trivia.parse(input, cur, ctx)
           if (tr.ok) cur = tr.span.end
         }
 
-        const result = parser.parse(input, cur, ctx)
+        const result = parsers[i]!.parse(input, cur, ctx)
         if (!result.ok) return result as ParseFail
         values.push(result.value)
         cur = result.span.end
@@ -42,5 +43,3 @@ export function seq<T extends [Parser<unknown>, ...Parser<unknown>[]]>(
     },
   }
 }
-
-type ParseFail = { ok: false; expected: string[]; span: { start: number; end: number } }

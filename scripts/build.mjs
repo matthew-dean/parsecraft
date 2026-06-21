@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+/**
+ * Build script: esbuild for JS bundles, tsc --emitDeclarationOnly for .d.ts
+ */
+import { build } from 'esbuild'
+import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
+
+const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+const external = [
+  ...Object.keys(pkg.dependencies ?? {}),
+  ...Object.keys(pkg.peerDependencies ?? {}),
+]
+
+const shared = {
+  entryPoints: ['src/index.ts', 'src/plugin/index.ts'],
+  bundle: true,
+  external,
+  sourcemap: true,
+  target: 'es2022',
+}
+
+await Promise.all([
+  build({ ...shared, format: 'esm', outdir: 'dist', outExtension: { '.js': '.js' } }),
+  build({ ...shared, format: 'cjs', outdir: 'dist', outExtension: { '.js': '.cjs' } }),
+])
+
+console.log('JS bundles built.')
+
+// Generate declarations via tsc
+execSync('node_modules/.bin/tsc -p tsconfig.build.json --emitDeclarationOnly --declaration --declarationMap --outDir dist', { stdio: 'inherit' })
+console.log('Declarations built.')

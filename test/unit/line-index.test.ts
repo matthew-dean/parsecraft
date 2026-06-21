@@ -1,0 +1,67 @@
+import { describe, it, expect } from 'vitest'
+import { buildLineIndex, offsetToLineCol, annotateSpan } from '../../src/index.ts'
+
+describe('buildLineIndex', () => {
+  it('single-line string has one entry', () => {
+    const idx = buildLineIndex('hello')
+    expect(idx.lineStarts).toEqual([0])
+  })
+
+  it('tracks newline positions', () => {
+    const idx = buildLineIndex('foo\nbar\nbaz')
+    expect(idx.lineStarts).toEqual([0, 4, 8])
+  })
+
+  it('trailing newline creates empty last line', () => {
+    const idx = buildLineIndex('foo\n')
+    expect(idx.lineStarts).toEqual([0, 4])
+  })
+})
+
+describe('offsetToLineCol', () => {
+  const input = 'foo\nbar\nbaz'
+  const idx = buildLineIndex(input)
+
+  it('offset 0 is line 1 col 1', () => {
+    expect(offsetToLineCol(idx, 0)).toEqual({ line: 1, col: 1 })
+  })
+
+  it('offset at newline char', () => {
+    expect(offsetToLineCol(idx, 3)).toEqual({ line: 1, col: 4 })
+  })
+
+  it('offset after newline is next line col 1', () => {
+    expect(offsetToLineCol(idx, 4)).toEqual({ line: 2, col: 1 })
+  })
+
+  it('offset on third line', () => {
+    // 'baz' starts at offset 8
+    expect(offsetToLineCol(idx, 10)).toEqual({ line: 3, col: 3 })
+  })
+
+  it('start of input', () => {
+    expect(offsetToLineCol(buildLineIndex(''), 0)).toEqual({ line: 1, col: 1 })
+  })
+})
+
+describe('annotateSpan', () => {
+  it('fills line/col on a span', () => {
+    const input = 'hello\nworld'
+    const idx = buildLineIndex(input)
+    const span = annotateSpan({ start: 6, end: 11 }, idx)
+    expect(span.startLine).toBe(2)
+    expect(span.startColumn).toBe(1)
+    expect(span.endLine).toBe(2)
+    expect(span.endColumn).toBe(6)
+  })
+
+  it('span crossing a newline', () => {
+    const input = 'foo\nbar'
+    const idx = buildLineIndex(input)
+    const span = annotateSpan({ start: 2, end: 5 }, idx)
+    expect(span.startLine).toBe(1)
+    expect(span.startColumn).toBe(3)
+    expect(span.endLine).toBe(2)
+    expect(span.endColumn).toBe(2)
+  })
+})

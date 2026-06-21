@@ -1,5 +1,4 @@
 import type { Parser, ParseContext, ParseResult, ParserMeta } from '../types.ts'
-import { empty } from './first-set.ts'
 
 export function many<T>(parser: Parser<T>): Parser<T[]> {
   const meta: ParserMeta = {
@@ -11,19 +10,17 @@ export function many<T>(parser: Parser<T>): Parser<T[]> {
   return {
     _tag: 'many',
     _meta: meta,
+    _def: { tag: 'many', parser: parser as Parser<unknown>, min: 0 },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T[]> {
       const values: T[] = []
       let cur = pos
-
       while (cur < input.length) {
         const result = parser.parse(input, cur, ctx)
         if (!result.ok) break
-        // Guard against infinite loops on zero-width matches
         if (result.span.end === cur) break
         values.push(result.value)
         cur = result.span.end
       }
-
       return { ok: true, value: values, span: { start: pos, end: cur } }
     },
   }
@@ -39,13 +36,12 @@ export function many1<T>(parser: Parser<T>): Parser<T[]> {
   return {
     _tag: 'many1',
     _meta: meta,
+    _def: { tag: 'many1', parser: parser as Parser<unknown>, min: 1 },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T[]> {
       const first = parser.parse(input, pos, ctx)
       if (!first.ok) return first
-
       const values: T[] = [first.value]
       let cur = first.span.end
-
       while (cur < input.length) {
         const result = parser.parse(input, cur, ctx)
         if (!result.ok) break
@@ -53,7 +49,6 @@ export function many1<T>(parser: Parser<T>): Parser<T[]> {
         values.push(result.value)
         cur = result.span.end
       }
-
       return { ok: true, value: values, span: { start: pos, end: cur } }
     },
   }
@@ -69,6 +64,7 @@ export function optional<T>(parser: Parser<T>): Parser<T | null> {
   return {
     _tag: 'optional',
     _meta: meta,
+    _def: { tag: 'optional', parser: parser as Parser<unknown> },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T | null> {
       const result = parser.parse(input, pos, ctx)
       if (result.ok) return result as ParseResult<T>
@@ -87,13 +83,12 @@ export function sepBy<T, S>(parser: Parser<T>, separator: Parser<S>): Parser<T[]
   return {
     _tag: 'sepBy',
     _meta: meta,
+    _def: { tag: 'sepBy', parser: parser as Parser<unknown>, separator: separator as Parser<unknown> },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T[]> {
       const first = parser.parse(input, pos, ctx)
       if (!first.ok) return { ok: true, value: [], span: { start: pos, end: pos } }
-
       const values: T[] = [first.value]
       let cur = first.span.end
-
       while (cur < input.length) {
         const sep = separator.parse(input, cur, ctx)
         if (!sep.ok) break
@@ -102,7 +97,6 @@ export function sepBy<T, S>(parser: Parser<T>, separator: Parser<S>): Parser<T[]
         values.push(next.value)
         cur = next.span.end
       }
-
       return { ok: true, value: values, span: { start: pos, end: cur } }
     },
   }

@@ -14,6 +14,8 @@ export type LitOptions = {
 }
 
 export function lit(value: string, opts: LitOptions = {}): Parser<string> {
+  const caseInsensitive = opts.caseInsensitive ?? false
+
   const firstSet = value.length > 0
     ? fromChar(value.codePointAt(0)!)
     : empty()
@@ -24,10 +26,9 @@ export function lit(value: string, opts: LitOptions = {}): Parser<string> {
     isTrivia: false,
   }
 
-  if (opts.caseInsensitive) {
+  if (caseInsensitive) {
     const upper = value.toUpperCase()
     const lower = value.toLowerCase()
-    // first set covers both cases of first char
     const firstUpper = upper.codePointAt(0)
     const firstLower = lower.codePointAt(0)
     meta.firstSet = firstLower !== undefined && firstUpper !== undefined
@@ -40,13 +41,14 @@ export function lit(value: string, opts: LitOptions = {}): Parser<string> {
   return {
     _tag: 'lit',
     _meta: meta,
+    _def: { tag: 'lit', value, caseInsensitive },
     parse(input: string, pos: number, _ctx: ParseContext): ParseResult<string> {
       const end = pos + value.length
       if (end > input.length) {
         return { ok: false, expected: [JSON.stringify(value)], span: { start: pos, end: pos } }
       }
       const slice = input.slice(pos, end)
-      const matched = opts.caseInsensitive
+      const matched = caseInsensitive
         ? collator().compare(slice, value) === 0
         : slice === value
       if (matched) {
