@@ -90,9 +90,13 @@ export function sepBy<T, S>(parser: Parser<T>, separator: Parser<S>): Parser<T[]
       const values: T[] = [first.value]
       let cur = first.span.end
       while (cur < input.length) {
-        const sep = separator.parse(input, cur, ctx)
+        let sepPos = cur
+        if (ctx.trivia) { const tr = ctx.trivia.parse(input, sepPos, ctx); if (tr.ok) sepPos = tr.span.end }
+        const sep = separator.parse(input, sepPos, ctx)
         if (!sep.ok) break
-        const next = parser.parse(input, sep.span.end, ctx)
+        let nextPos = sep.span.end
+        if (ctx.trivia) { const tr = ctx.trivia.parse(input, nextPos, ctx); if (tr.ok) nextPos = tr.span.end }
+        const next = parser.parse(input, nextPos, ctx)
         if (!next.ok) break
         values.push(next.value)
         cur = next.span.end

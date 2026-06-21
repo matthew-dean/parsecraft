@@ -4,7 +4,9 @@
  */
 import { build } from 'esbuild'
 import { execSync } from 'child_process'
-import { readFileSync } from 'fs'
+import { readFileSync, rmSync } from 'fs'
+
+rmSync('dist', { recursive: true, force: true })
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 const external = [
