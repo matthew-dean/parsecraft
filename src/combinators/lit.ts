@@ -1,0 +1,58 @@
+import type { Parser, ParseContext, ParseResult, ParserMeta } from '../types.ts'
+import { fromChar, empty } from './first-set.ts'
+
+let _collatorCache: Intl.Collator | null = null
+function collator(): Intl.Collator {
+  if (_collatorCache === null) {
+    _collatorCache = new Intl.Collator(undefined, { sensitivity: 'accent' })
+  }
+  return _collatorCache
+}
+
+export type LitOptions = {
+  caseInsensitive?: boolean
+}
+
+export function lit(value: string, opts: LitOptions = {}): Parser<string> {
+  const firstSet = value.length > 0
+    ? fromChar(value.codePointAt(0)!)
+    : empty()
+
+  const meta: ParserMeta = {
+    firstSet,
+    canMatchNewline: value.includes('\n'),
+    isTrivia: false,
+  }
+
+  if (opts.caseInsensitive) {
+    const upper = value.toUpperCase()
+    const lower = value.toLowerCase()
+    // first set covers both cases of first char
+    const firstUpper = upper.codePointAt(0)
+    const firstLower = lower.codePointAt(0)
+    meta.firstSet = firstLower !== undefined && firstUpper !== undefined
+      ? { kind: 'ranges', ranges: [
+          { lo: Math.min(firstLower, firstUpper), hi: Math.max(firstLower, firstUpper) }
+        ]}
+      : firstSet
+  }
+
+  return {
+    _tag: 'lit',
+    _meta: meta,
+    parse(input: string, pos: number, _ctx: ParseContext): ParseResult<string> {
+      const end = pos + value.length
+      if (end > input.length) {
+        return { ok: false, expected: [JSON.stringify(value)], span: { start: pos, end: pos } }
+      }
+      const slice = input.slice(pos, end)
+      const matched = opts.caseInsensitive
+        ? collator().compare(slice, value) === 0
+        : slice === value
+      if (matched) {
+        return { ok: true, value: slice, span: { start: pos, end } }
+      }
+      return { ok: false, expected: [JSON.stringify(value)], span: { start: pos, end: pos } }
+    },
+  }
+}
