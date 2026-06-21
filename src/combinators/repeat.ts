@@ -26,7 +26,7 @@ export function many<T>(parser: Parser<T>): Parser<T[]> {
   }
 }
 
-export function many1<T>(parser: Parser<T>): Parser<T[]> {
+export function oneOrMore<T>(parser: Parser<T>): Parser<T[]> {
   const meta: ParserMeta = {
     firstSet: parser._meta.firstSet,
     canMatchNewline: parser._meta.canMatchNewline,
@@ -34,9 +34,9 @@ export function many1<T>(parser: Parser<T>): Parser<T[]> {
   }
 
   return {
-    _tag: 'many1',
+    _tag: 'oneOrMore',
     _meta: meta,
-    _def: { tag: 'many1', parser: parser as Parser<unknown>, min: 1 },
+    _def: { tag: 'oneOrMore', parser: parser as Parser<unknown>, min: 1 },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T[]> {
       const first = parser.parse(input, pos, ctx)
       if (!first.ok) return first

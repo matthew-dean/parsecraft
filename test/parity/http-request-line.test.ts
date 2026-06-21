@@ -6,7 +6,7 @@
  *   METHOD SP request-target SP HTTP/1.x CRLF
  */
 import { describe, it, expect } from 'vitest'
-import { lit, seq, choice, regex, map, parse, compile } from '../../src/index.ts'
+import { literal, sequence, choice, regex, transform, parse, compile } from '../../src/index.ts'
 
 type RequestLine = {
   method: string
@@ -16,16 +16,16 @@ type RequestLine = {
 
 // --- parsecraft parser ---
 const method = choice(
-  lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'),
-  lit('PATCH'), lit('HEAD'), lit('OPTIONS')
+  literal('GET'), literal('POST'), literal('PUT'), literal('DELETE'),
+  literal('PATCH'), literal('HEAD'), literal('OPTIONS')
 )
-const sp = lit(' ')
+const sp = literal(' ')
 const requestTarget = regex(/[^\s]+/)
-const httpVersion = seq(lit('HTTP/'), regex(/1\.[01]/))
-const crlf = lit('\r\n')
+const httpVersion = sequence(literal('HTTP/'), regex(/1\.[01]/))
+const crlf = literal('\r\n')
 
-const requestLine = map(
-  seq(method, sp, requestTarget, sp, httpVersion, crlf),
+const requestLine = transform(
+  sequence(method, sp, requestTarget, sp, httpVersion, crlf),
   ([m, , target, , [, ver]]) => ({ method: m, target, version: `HTTP/${ver}` } satisfies RequestLine)
 )
 

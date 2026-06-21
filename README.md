@@ -17,12 +17,12 @@ pnpm add parsecraft
 No build step required — works anywhere.
 
 ```ts
-import { lit, seq, choice, regex, map, parse } from 'parsecraft'
+import { literal, sequence, choice, regex, transform, parse } from 'parsecraft'
 
-const method = choice(lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'))
+const method = choice(literal('GET'), literal('POST'), literal('PUT'), literal('DELETE'))
 
-const requestLine = map(
-  seq(method, lit(' '), regex(/[^\s]+/), lit(' HTTP/'), regex(/1\.[01]/)),
+const requestLine = transform(
+  sequence(method, literal(' '), regex(/[^\s]+/), literal(' HTTP/'), regex(/1\.[01]/)),
   ([verb, , target, , version]) => ({ verb, target, version })
 )
 
@@ -51,35 +51,35 @@ module.exports = { plugins: [parsecraft.webpack()] }
 Then just add `with { type: 'macro' }` to the import — no other changes:
 
 ```ts
-import { lit, seq, choice, regex, map } from 'parsecraft' with { type: 'macro' }
+import { literal, sequence, choice, regex, transform } from 'parsecraft' with { type: 'macro' }
 
 // Same combinator code — the plugin evaluates it at build time and
 // replaces each variable with an optimized inline function.
-const method = choice(lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'))
+const method = choice(literal('GET'), literal('POST'), literal('PUT'), literal('DELETE'))
 
-const requestLine = map(
-  seq(method, lit(' '), regex(/[^\s]+/), lit(' HTTP/'), regex(/1\.[01]/)),
+const requestLine = transform(
+  sequence(method, literal(' '), regex(/[^\s]+/), literal(' HTTP/'), regex(/1\.[01]/)),
   ([verb, , target, , version]) => ({ verb, target, version })
 )
 ```
 
 The `parsecraft` import disappears entirely from the output. Each parser variable becomes a self-contained function expression.
 
-Parser variables that reference user closures (like `map()` with an arrow function) keep their runtime form — only pure combinator trees are inlined.
+Parser variables that reference user closures (like `transform()` with an arrow function) keep their runtime form — only pure combinator trees are inlined.
 
 ## Combinators
 
 | Combinator | Description |
 |---|---|
-| `lit(value, opts?)` | Match a literal string. `opts.caseInsensitive` uses `Intl.Collator`. |
+| `literal(value, opts?)` | Match a literal string. `opts.caseInsensitive` uses `Intl.Collator`. |
 | `regex(pattern)` | Match a regex at the current position. Patterns pass through `regexp-tree` optimizer. |
-| `seq(...parsers)` | Match all parsers in order; returns a tuple `[v1, v2, ...]`. |
+| `sequence(...parsers)` | Match all parsers in order; returns a tuple `[v1, v2, ...]`. |
 | `choice(...parsers)` | Try alternatives in order. Disjoint first characters → O(1) dispatch. |
 | `many(parser)` | Zero or more repetitions; compiles to a `while` loop. |
-| `many1(parser)` | One or more; fails if no match at all. |
+| `oneOrMore(parser)` | One or more; fails if no match at all. |
 | `optional(parser)` | Zero or one; returns `null` if not matched. |
 | `sepBy(parser, sep)` | Zero or more `parser` separated by `sep`. |
-| `map(parser, fn)` | Transform the matched value with `fn(value, span)`. |
+| `transform(parser, fn)` | Transform the matched value with `fn(value, span)`. |
 | `skip(main, skipped)` | Match `main`, then optionally skip `skipped`. Returns `main`'s value. |
 | `trivia(parser)` | Mark a parser as trivia. Used by `grammar()` for auto-skipping. |
 | `grammar(opts, root)` | Set grammar-wide options (`trivia`, `trackLines`) on a root parser. |
@@ -87,28 +87,28 @@ Parser variables that reference user closures (like `map()` with an arrow functi
 ## Trivia (whitespace / comment skipping)
 
 ```ts
-import { lit, regex, map, trivia, grammar, sepBy, parse } from 'parsecraft'
+import { literal, regex, transform, trivia, grammar, sepBy, parse } from 'parsecraft'
 
 const ws = trivia(regex(/\s+/))
 const word = regex(/[a-z]+/)
 
 const list = grammar(
   { trivia: ws },
-  sepBy(word, lit(','))
+  sepBy(word, literal(','))
 )
 
 parse(list, 'foo ,  bar , baz')
 // { ok: true, value: ['foo', 'bar', 'baz'], ... }
 ```
 
-When `trivia` is set, `seq()` automatically skips trivia between its terms.
+When `trivia` is set, `sequence()` automatically skips trivia between its terms.
 
 ## Line / column tracking
 
 ```ts
-import { lit, seq, parse } from 'parsecraft'
+import { literal, sequence, parse } from 'parsecraft'
 
-const p = seq(lit('hello'), lit('\n'), lit('world'))
+const p = sequence(literal('hello'), literal('\n'), literal('world'))
 const result = parse(p, 'hello\nworld', { trackLines: true })
 
 if (result.ok) {
@@ -127,9 +127,9 @@ You can also call `buildLineIndex` + `annotateSpan` manually for more control.
 Call `compile()` directly to get an optimized parser at runtime — the same code the macro plugin inlines at build time:
 
 ```ts
-import { choice, lit, compile } from 'parsecraft'
+import { choice, literal, compile } from 'parsecraft'
 
-const parser = choice(lit('yes'), lit('no'))
+const parser = choice(literal('yes'), literal('no'))
 const compiled = compile(parser)
 
 compiled.parse('yes')          // { ok: true, value: 'yes', span: { start: 0, end: 3 } }
@@ -171,7 +171,7 @@ type Span = {
 //              else if (code === 80 /*P*/) { ...POST... }
 //              else if (code === 68 /*D*/) { ...DELETE... }
 //              else return { ok: false, ... }
-const method = choice(lit('GET'), lit('POST'), lit('DELETE'))
+const method = choice(literal('GET'), literal('POST'), literal('DELETE'))
 ```
 
 When alternatives share a first character, it tries each in order with IIFE-wrapped early returns.

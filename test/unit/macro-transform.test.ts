@@ -11,24 +11,24 @@ describe('transformMacro — import detection', () => {
   })
 
   it('returns null for regular (non-macro) parsecraft imports', () => {
-    expect(transform(`import { lit } from 'parsecraft'`)).toBeNull()
+    expect(transform(`import { literal } from 'parsecraft'`)).toBeNull()
   })
 
   it('detects with { type: "macro" } syntax', () => {
     const code = `
-import { lit } from 'parsecraft' with { type: 'macro' }
-const greeting = lit('hello')
+import { literal } from 'parsecraft' with { type: 'macro' }
+const greeting = literal('hello')
 `.trim()
     const result = transform(code)
     expect(result).not.toBeNull()
   })
 })
 
-describe('transformMacro — lit inlining', () => {
-  it('inlines a simple lit() call', () => {
+describe('transformMacro — literal inlining', () => {
+  it('inlines a simple literal() call', () => {
     const code = `
-import { lit } from 'parsecraft' with { type: 'macro' }
-const greeting = lit('hello')
+import { literal } from 'parsecraft' with { type: 'macro' }
+const greeting = literal('hello')
 `.trim()
     const result = transform(code)!
     // The import should be gone
@@ -40,20 +40,20 @@ const greeting = lit('hello')
     expect(result.code).toContain('104')
   })
 
-  it('inlines a long lit() (>4 chars uses slice)', () => {
+  it('inlines a long literal() (>4 chars uses slice)', () => {
     const code = `
-import { lit } from 'parsecraft' with { type: 'macro' }
-const kw = lit('Authorization')
+import { literal } from 'parsecraft' with { type: 'macro' }
+const kw = literal('Authorization')
 `.trim()
     const result = transform(code)!
     expect(result.code).toContain('"Authorization"')
     expect(result.code).not.toContain("from 'parsecraft'")
   })
 
-  it('inlines case-insensitive lit', () => {
+  it('inlines case-insensitive literal', () => {
     const code = `
-import { lit } from 'parsecraft' with { type: 'macro' }
-const method = lit('GET', { caseInsensitive: true })
+import { literal } from 'parsecraft' with { type: 'macro' }
+const method = literal('GET', { caseInsensitive: true })
 `.trim()
     const result = transform(code)!
     expect(result.code).toContain('_collator')
@@ -64,8 +64,8 @@ const method = lit('GET', { caseInsensitive: true })
 describe('transformMacro — choice inlining', () => {
   it('inlines a disjoint choice', () => {
     const code = `
-import { lit, choice } from 'parsecraft' with { type: 'macro' }
-const method = choice(lit('GET'), lit('POST'), lit('DELETE'))
+import { literal, choice } from 'parsecraft' with { type: 'macro' }
+const method = choice(literal('GET'), literal('POST'), literal('DELETE'))
 `.trim()
     const result = transform(code)!
     expect(result.code).not.toContain("from 'parsecraft'")
@@ -74,11 +74,11 @@ const method = choice(lit('GET'), lit('POST'), lit('DELETE'))
   })
 })
 
-describe('transformMacro — seq inlining', () => {
-  it('inlines seq of lits', () => {
+describe('transformMacro — sequence inlining', () => {
+  it('inlines sequence of literals', () => {
     const code = `
-import { lit, seq } from 'parsecraft' with { type: 'macro' }
-const pair = seq(lit('foo'), lit('bar'))
+import { literal, sequence } from 'parsecraft' with { type: 'macro' }
+const pair = sequence(literal('foo'), literal('bar'))
 `.trim()
     const result = transform(code)!
     expect(result.code).not.toContain("from 'parsecraft'")
@@ -89,11 +89,11 @@ const pair = seq(lit('foo'), lit('bar'))
 describe('transformMacro — cross-declaration references', () => {
   it('inlines a parser that references a previously inlined parser', () => {
     const code = `
-import { lit, seq, choice, regex } from 'parsecraft' with { type: 'macro' }
-const method = choice(lit('GET'), lit('POST'), lit('PUT'))
-const sp = lit(' ')
+import { literal, sequence, choice, regex } from 'parsecraft' with { type: 'macro' }
+const method = choice(literal('GET'), literal('POST'), literal('PUT'))
+const sp = literal(' ')
 const target = regex(/[^\\s]+/)
-const requestLine = seq(method, sp, target)
+const requestLine = sequence(method, sp, target)
 `.trim()
     const result = transform(code)!
     expect(result.code).not.toContain("from 'parsecraft'")
@@ -103,17 +103,17 @@ const requestLine = seq(method, sp, target)
 })
 
 describe('transformMacro — non-inlinable declarations', () => {
-  it('leaves map() declarations as regular runtime calls', () => {
+  it('leaves transform() declarations as regular runtime calls', () => {
     const code = `
-import { lit, map } from 'parsecraft' with { type: 'macro' }
-const upper = map(lit('hello'), s => s.toUpperCase())
+import { literal, transform } from 'parsecraft' with { type: 'macro' }
+const upper = transform(literal('hello'), s => s.toUpperCase())
 `.trim()
     const result = transform(code)
-    // map with user fn can't be inlined — import kept, decl kept as-is
+    // transform with user fn can't be inlined — import kept, decl kept as-is
     if (result !== null) {
       // If something was transformed, it shouldn't have removed all of parsecraft
-      // The map call itself remains (only inlinable declarations are replaced)
-      expect(result.code).toContain('map(')
+      // The transform call itself remains (only inlinable declarations are replaced)
+      expect(result.code).toContain('transform(')
     }
   })
 })
@@ -121,8 +121,8 @@ const upper = map(lit('hello'), s => s.toUpperCase())
 describe('transformMacro — source maps', () => {
   it('returns a source map', () => {
     const code = `
-import { lit } from 'parsecraft' with { type: 'macro' }
-const x = lit('x')
+import { literal } from 'parsecraft' with { type: 'macro' }
+const x = literal('x')
 `.trim()
     const result = transform(code)!
     expect(result.map).toBeDefined()

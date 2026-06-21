@@ -12,15 +12,15 @@ import * as parsecraft from '../index.ts'
 export type Scope = Map<string, Parser<unknown>>
 
 const SUPPORTED: Record<string, (...args: unknown[]) => Parser<unknown>> = {
-  lit:      (...a) => parsecraft.lit(a[0] as string, a[1] as parsecraft.LitOptions | undefined),
-  regex:    (...a) => parsecraft.regex(a[0] as RegExp, a[1] as string | undefined),
-  seq:      (...a) => (parsecraft.seq as (...p: Parser<unknown>[]) => Parser<unknown[]>)(...(a as Parser<unknown>[])),
-  choice:   (...a) => (parsecraft.choice as (...p: Parser<unknown>[]) => Parser<unknown>)(...(a as Parser<unknown>[])),
-  many:     (...a) => parsecraft.many(a[0] as Parser<unknown>),
-  many1:    (...a) => parsecraft.many1(a[0] as Parser<unknown>),
-  optional: (...a) => parsecraft.optional(a[0] as Parser<unknown>),
-  sepBy:    (...a) => parsecraft.sepBy(a[0] as Parser<unknown>, a[1] as Parser<unknown>),
-  // map / grammar intentionally omitted — take user closures that can't be serialized
+  literal:   (...a) => parsecraft.literal(a[0] as string, a[1] as parsecraft.LiteralOptions | undefined),
+  regex:     (...a) => parsecraft.regex(a[0] as RegExp, a[1] as string | undefined),
+  sequence:  (...a) => (parsecraft.sequence as (...p: Parser<unknown>[]) => Parser<unknown[]>)(...(a as Parser<unknown>[])),
+  choice:    (...a) => (parsecraft.choice as (...p: Parser<unknown>[]) => Parser<unknown>)(...(a as Parser<unknown>[])),
+  many:      (...a) => parsecraft.many(a[0] as Parser<unknown>),
+  oneOrMore: (...a) => parsecraft.oneOrMore(a[0] as Parser<unknown>),
+  optional:  (...a) => parsecraft.optional(a[0] as Parser<unknown>),
+  sepBy:     (...a) => parsecraft.sepBy(a[0] as Parser<unknown>, a[1] as Parser<unknown>),
+  // transform / grammar intentionally omitted — take user closures that can't be serialized
 }
 
 /** Try to evaluate an oxc AST Expression as a parsecraft Parser. Returns null if impossible. */

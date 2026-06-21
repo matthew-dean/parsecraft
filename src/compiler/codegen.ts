@@ -65,7 +65,7 @@ function asIIFE(stmts: string[], valueVar: string, endVar: string, startPos: str
 // Per-combinator emitters
 // ---------------------------------------------------------------------------
 
-function emitLit(def: Extract<ParserDef, { tag: 'lit' }>, ctx: Ctx, pos: string): ER {
+function emitLit(def: Extract<ParserDef, { tag: 'literal' }>, ctx: Ctx, pos: string): ER {
   const { value, caseInsensitive } = def
   const len = value.length
   const vv = v(ctx)
@@ -124,7 +124,7 @@ function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: str
   return { stmts, valueVar: vv, endVar: `${pos} + ${vv}.length` }
 }
 
-function emitSeq(def: Extract<ParserDef, { tag: 'seq' }>, ctx: Ctx, pos: string): ER {
+function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER {
   const startV = v(ctx, '_start')
   const curV = v(ctx, '_cur')
   const stmts: string[] = [
@@ -148,7 +148,7 @@ function emitChoice(def: Extract<ParserDef, { tag: 'choice' }>, ctx: Ctx, pos: s
   const allExpected = JSON.stringify(
     def.parsers.map(p => {
       const d = p._def
-      if (d.tag === 'lit') return JSON.stringify(d.value)
+      if (d.tag === 'literal') return JSON.stringify(d.value)
       if (d.tag === 'regex') return `/${d.source}/`
       return p._tag
     })
@@ -202,7 +202,7 @@ function emitChoice(def: Extract<ParserDef, { tag: 'choice' }>, ctx: Ctx, pos: s
   return { stmts, valueVar: `${resV}.value`, endVar: `${resV}.span.end` }
 }
 
-function emitMany(def: Extract<ParserDef, { tag: 'many' | 'many1' }>, ctx: Ctx, pos: string): ER {
+function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: Ctx, pos: string): ER {
   const arrV = v(ctx, '_arr')
   const curV = v(ctx, '_cur')
   const stmts: string[] = [
@@ -333,15 +333,15 @@ function emitRuntimeFallback(parser: Parser<unknown>, ctx: Ctx, pos: string): ER
 function emit(p: Parser<unknown>, ctx: Ctx, pos: string): ER {
   const def = p._def
   switch (def.tag) {
-    case 'lit':      return emitLit(def, ctx, pos)
-    case 'regex':    return emitRegex(def, ctx, pos)
-    case 'seq':      return emitSeq(def, ctx, pos)
-    case 'choice':   return emitChoice(def, ctx, pos)
+    case 'literal':   return emitLit(def, ctx, pos)
+    case 'regex':     return emitRegex(def, ctx, pos)
+    case 'sequence':  return emitSeq(def, ctx, pos)
+    case 'choice':    return emitChoice(def, ctx, pos)
     case 'many':
-    case 'many1':    return emitMany(def, ctx, pos)
-    case 'optional': return emitOptional(def, ctx, pos)
-    case 'sepBy':    return emitSepBy(p, def, ctx, pos)
-    case 'map': {
+    case 'oneOrMore': return emitMany(def, ctx, pos)
+    case 'optional':  return emitOptional(def, ctx, pos)
+    case 'sepBy':     return emitSepBy(p, def, ctx, pos)
+    case 'transform': {
       const inner = emit(def.parser, ctx, pos)
       const fnIdx = ctx.mapFns.length
       ctx.mapFns.push(def.fn)

@@ -9,11 +9,11 @@ function collator(): Intl.Collator {
   return _collatorCache
 }
 
-export type LitOptions = {
+export type LiteralOptions = {
   caseInsensitive?: boolean
 }
 
-export function lit(value: string, opts: LitOptions = {}): Parser<string> {
+export function literal(value: string, opts: LiteralOptions = {}): Parser<string> {
   const caseInsensitive = opts.caseInsensitive ?? false
 
   const firstSet = value.length > 0
@@ -39,9 +39,9 @@ export function lit(value: string, opts: LitOptions = {}): Parser<string> {
   }
 
   return {
-    _tag: 'lit',
+    _tag: 'literal',
     _meta: meta,
-    _def: { tag: 'lit', value, caseInsensitive },
+    _def: { tag: 'literal', value, caseInsensitive },
     parse(input: string, pos: number, _ctx: ParseContext): ParseResult<string> {
       const end = pos + value.length
       if (end > input.length) {

@@ -5,7 +5,7 @@ type UnwrapParsers<T extends Parser<unknown>[]> = {
   [K in keyof T]: T[K] extends Parser<infer U> ? U : never
 }
 
-export function seq<T extends [Parser<unknown>, ...Parser<unknown>[]]>(
+export function sequence<T extends [Parser<unknown>, ...Parser<unknown>[]]>(
   ...parsers: T
 ): Parser<UnwrapParsers<T>> {
   const meta: ParserMeta = {
@@ -15,9 +15,9 @@ export function seq<T extends [Parser<unknown>, ...Parser<unknown>[]]>(
   }
 
   return {
-    _tag: 'seq',
+    _tag: 'sequence',
     _meta: meta,
-    _def: { tag: 'seq', parsers: parsers as Parser<unknown>[] },
+    _def: { tag: 'sequence', parsers: parsers as Parser<unknown>[] },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<UnwrapParsers<T>> {
       const values: unknown[] = []
       let cur = pos

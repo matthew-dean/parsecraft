@@ -1,13 +1,13 @@
 import type { Parser, ParseContext, ParseResult } from '../types.ts'
 
-export function map<T, U>(
+export function transform<T, U>(
   parser: Parser<T>,
   fn: (value: T, span: { start: number; end: number }) => U
 ): Parser<U> {
   return {
-    _tag: 'map',
+    _tag: 'transform',
     _meta: parser._meta,
-    _def: { tag: 'map', parser: parser as Parser<unknown>, fn: fn as (v: unknown, span: { start: number; end: number }) => unknown },
+    _def: { tag: 'transform', parser: parser as Parser<unknown>, fn: fn as (v: unknown, span: { start: number; end: number }) => unknown },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<U> {
       const result = parser.parse(input, pos, ctx)
       if (!result.ok) return result

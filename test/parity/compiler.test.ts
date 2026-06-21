@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  lit, regex, seq, choice, many, many1, optional, sepBy, map, grammar,
+  literal, regex, sequence, choice, many, oneOrMore, optional, sepBy, transform, grammar,
   parse as runtimeParse, compile,
 } from '../../src/index.ts'
 import { trivia } from '../../src/combinators/map.ts'
@@ -42,11 +42,11 @@ function par<T>(label: string, parser: import('../../src/index.ts').Parser<T>, i
   }
 }
 
-describe('lit — compiler parity', () => {
-  par('exact match', lit('hello'), ['hello', 'world', 'hell', 'hello world'])
-  par('single char', lit('x'), ['x', 'y', ''])
-  par('case-insensitive', lit('GET', { caseInsensitive: true }), ['GET', 'get', 'Get', 'POST'])
-  par('long string (>4 chars)', lit('Authorization'), ['Authorization', 'authorization', 'Auth'])
+describe('literal — compiler parity', () => {
+  par('exact match', literal('hello'), ['hello', 'world', 'hell', 'hello world'])
+  par('single char', literal('x'), ['x', 'y', ''])
+  par('case-insensitive', literal('GET', { caseInsensitive: true }), ['GET', 'get', 'Get', 'POST'])
+  par('long string (>4 chars)', literal('Authorization'), ['Authorization', 'authorization', 'Auth'])
 })
 
 describe('regex — compiler parity', () => {
@@ -55,47 +55,47 @@ describe('regex — compiler parity', () => {
   par('optional group', regex(/foo(bar)?/), ['foo', 'foobar', 'baz'])
 })
 
-describe('seq — compiler parity', () => {
-  par('two lits', seq(lit('hello'), lit(' world')), ['hello world', 'hello', 'goodbye'])
-  par('lit + regex', seq(lit('x='), regex(/[0-9]+/)), ['x=42', 'x=', 'y=42'])
-  par('three parts', seq(lit('('), regex(/[^)]+/), lit(')')), ['(hello)', '()', 'hello'])
+describe('sequence — compiler parity', () => {
+  par('two lits', sequence(literal('hello'), literal(' world')), ['hello world', 'hello', 'goodbye'])
+  par('lit + regex', sequence(literal('x='), regex(/[0-9]+/)), ['x=42', 'x=', 'y=42'])
+  par('three parts', sequence(literal('('), regex(/[^)]+/), literal(')')), ['(hello)', '()', 'hello'])
 })
 
 describe('choice — compiler parity (disjoint)', () => {
-  const p = choice(lit('apple'), lit('banana'), lit('cherry'))
+  const p = choice(literal('apple'), literal('banana'), literal('cherry'))
   par('disjoint first chars', p, ['apple', 'banana', 'cherry', 'durian', 'ap'])
 })
 
 describe('choice — compiler parity (overlapping)', () => {
-  const p = choice(lit('foo'), lit('far'), lit('baz'))
+  const p = choice(literal('foo'), literal('far'), literal('baz'))
   par('overlapping first chars (f)', p, ['foo', 'far', 'baz', 'fob', 'bar'])
 })
 
 describe('many — compiler parity', () => {
-  par('many lit', many(lit('ab')), ['ababab', 'ab', '', 'abx'])
+  par('many lit', many(literal('ab')), ['ababab', 'ab', '', 'abx'])
   par('many regex', many(regex(/[0-9]/)), ['123', '', 'abc', '1a'])
 })
 
-describe('many1 — compiler parity', () => {
-  par('many1 lit', many1(lit('a')), ['aaa', 'a', '', 'b', 'ab'])
+describe('oneOrMore — compiler parity', () => {
+  par('oneOrMore lit', oneOrMore(literal('a')), ['aaa', 'a', '', 'b', 'ab'])
 })
 
 describe('optional — compiler parity', () => {
-  par('optional present', optional(lit('foo')), ['foo', 'bar', ''])
+  par('optional present', optional(literal('foo')), ['foo', 'bar', ''])
 })
 
 describe('sepBy — compiler parity', () => {
-  par('comma-separated digits', sepBy(regex(/[0-9]+/), lit(',')), ['1,2,3', '42', '', 'a,b'])
+  par('comma-separated digits', sepBy(regex(/[0-9]+/), literal(',')), ['1,2,3', '42', '', 'a,b'])
 })
 
-describe('map — compiler parity', () => {
-  const p = map(regex(/[0-9]+/), s => parseInt(s, 10))
+describe('transform — compiler parity', () => {
+  const p = transform(regex(/[0-9]+/), s => parseInt(s, 10))
   par('parse integer', p, ['42', '0', '999', 'abc'])
 })
 
-describe('seq with map — compiler parity', () => {
-  const p = map(
-    seq(lit('('), regex(/[^)]+/), lit(')')),
+describe('sequence with transform — compiler parity', () => {
+  const p = transform(
+    sequence(literal('('), regex(/[^)]+/), literal(')')),
     ([, inner]) => inner.trim()
   )
   par('extract inner', p, ['(hello)', '( world )', '()invalid', 'nope'])
@@ -103,11 +103,11 @@ describe('seq with map — compiler parity', () => {
 
 describe('HTTP request line — compiler parity', () => {
   const method = choice(
-    lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'),
-    lit('PATCH'), lit('HEAD'), lit('OPTIONS')
+    literal('GET'), literal('POST'), literal('PUT'), literal('DELETE'),
+    literal('PATCH'), literal('HEAD'), literal('OPTIONS')
   )
-  const requestLine = map(
-    seq(method, lit(' '), regex(/[^\s]+/), lit(' '), lit('HTTP/'), regex(/1\.[01]/), lit('\r\n')),
+  const requestLine = transform(
+    sequence(method, literal(' '), regex(/[^\s]+/), literal(' '), literal('HTTP/'), regex(/1\.[01]/), literal('\r\n')),
     ([m, , target, , , ver]) => ({ method: m, target, version: `HTTP/${ver}` })
   )
   par('request line', requestLine, [

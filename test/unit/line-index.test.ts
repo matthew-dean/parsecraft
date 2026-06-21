@@ -68,8 +68,8 @@ describe('annotateSpan', () => {
 
 describe('parse with trackLines', () => {
   it('annotates span with line/col when trackLines: true', async () => {
-    const { lit, seq, parse } = await import('../../src/index.ts')
-    const p = seq(lit('foo'), lit('\n'), lit('bar'))
+    const { literal, sequence, parse } = await import('../../src/index.ts')
+    const p = sequence(literal('foo'), literal('\n'), literal('bar'))
     const r = parse(p, 'foo\nbar', { trackLines: true })
     expect(r.ok).toBe(true)
     if (r.ok) {
@@ -81,8 +81,8 @@ describe('parse with trackLines', () => {
   })
 
   it('no line/col without trackLines', async () => {
-    const { lit, parse } = await import('../../src/index.ts')
-    const r = parse(lit('foo'), 'foo')
+    const { literal, parse } = await import('../../src/index.ts')
+    const r = parse(literal('foo'), 'foo')
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.span.startLine).toBeUndefined()

@@ -27,18 +27,18 @@ export type ParseResult<T> = ParseOk<T> | ParseFail
 // traverse the full combinator structure without re-parsing source.
 // ---------------------------------------------------------------------------
 export type ParserDef =
-  | { tag: 'lit';      value: string; caseInsensitive: boolean }
-  | { tag: 'regex';    source: string; flags: string; optimizedSource: string }
-  | { tag: 'seq';      parsers: Parser<unknown>[] }
-  | { tag: 'choice';   parsers: Parser<unknown>[]; disjoint: boolean }
-  | { tag: 'many';     parser: Parser<unknown>; min: 0 }
-  | { tag: 'many1';    parser: Parser<unknown>; min: 1 }
-  | { tag: 'optional'; parser: Parser<unknown> }
-  | { tag: 'sepBy';    parser: Parser<unknown>; separator: Parser<unknown> }
-  | { tag: 'map';      parser: Parser<unknown>; fn: (v: unknown, span: { start: number; end: number }) => unknown }
-  | { tag: 'skip';     main: Parser<unknown>; skipped: Parser<unknown> }
-  | { tag: 'trivia';   parser: Parser<unknown> }
-  | { tag: 'grammar';  parser: Parser<unknown>; triviaParser: Parser<unknown> | undefined; trackLines: boolean }
+  | { tag: 'literal';   value: string; caseInsensitive: boolean }
+  | { tag: 'regex';     source: string; flags: string; optimizedSource: string }
+  | { tag: 'sequence';  parsers: Parser<unknown>[] }
+  | { tag: 'choice';    parsers: Parser<unknown>[]; disjoint: boolean }
+  | { tag: 'many';      parser: Parser<unknown>; min: 0 }
+  | { tag: 'oneOrMore'; parser: Parser<unknown>; min: 1 }
+  | { tag: 'optional';  parser: Parser<unknown> }
+  | { tag: 'sepBy';     parser: Parser<unknown>; separator: Parser<unknown> }
+  | { tag: 'transform'; parser: Parser<unknown>; fn: (v: unknown, span: { start: number; end: number }) => unknown }
+  | { tag: 'skip';      main: Parser<unknown>; skipped: Parser<unknown> }
+  | { tag: 'trivia';    parser: Parser<unknown> }
+  | { tag: 'grammar';   parser: Parser<unknown>; triviaParser: Parser<unknown> | undefined; trackLines: boolean }
   | { tag: 'unknown' }
 
 export type Parser<T> = {
