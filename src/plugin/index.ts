@@ -1,48 +1,172 @@
 /**
- * parsecraft unplugin — transforms parsecraft combinator calls at build time.
+ * parsecraft unplugin — macro transform
  *
- * Usage (Vite):
+ * Handles:  import { ... } from 'parsecraft' with { type: 'macro' }
+ *
+ * For each such import, walks the file's AST, finds variable declarations
+ * whose RHS is a pure parsecraft combinator call, evaluates them at build time,
+ * compiles the result to an optimized inline function, and replaces the
+ * declaration — removing the import entirely.
+ *
+ * Usage:
+ *   // vite.config.ts
  *   import parsecraft from 'parsecraft/plugin'
  *   export default { plugins: [parsecraft()] }
  *
- * Usage (Rollup):
+ *   // rollup.config.js
  *   import parsecraft from 'parsecraft/plugin'
  *   export default { plugins: [parsecraft.rollup()] }
- *
- * Files that import from 'parsecraft' and call compile() are left as-is —
- * the compile() call is always available at runtime too. The plugin's job is
- * to replace `compile(parser)` call sites with pre-expanded, AOT-optimized
- * function bodies to eliminate the runtime overhead of `new Function(...)`.
- *
- * For the MVP the plugin is a pass-through that validates the import and
- * emits a banner comment; full AST-rewrite is the next phase.
  */
 import { createUnplugin } from 'unplugin'
+import { parseSync } from 'oxc-parser'
+import MagicString from 'magic-string'
+import { evaluateExpr, referencesAny, type Scope } from './evaluator.ts'
+import { compile } from '../compiler/codegen.ts'
+import type { Parser } from '../types.ts'
+import type {
+  ImportDeclaration,
+  VariableDeclarator,
+  Expression,
+  Statement,
+} from '@oxc-project/types'
 
-export type ParsraftPluginOptions = {
-  /** Glob patterns to include (default: all .ts/.js files) */
-  include?: string[]
-  /** Glob patterns to exclude */
-  exclude?: string[]
+export type ParsecraftPluginOptions = {
+  /** Extra module specifiers to treat as parsecraft re-exports */
+  moduleAliases?: string[]
 }
 
-const PARSECRAFT_RE = /['"]parsecraft['"]/
+const PARSECRAFT_MODULE = 'parsecraft'
 
-const parsecraftPlugin = createUnplugin((_opts: ParsraftPluginOptions = {}) => ({
+export default createUnplugin((opts: ParsecraftPluginOptions = {}) => ({
   name: 'parsecraft',
+
   transformInclude(id: string) {
     return /\.[jt]sx?$/.test(id) && !id.includes('node_modules')
   },
+
   transform(code: string, id: string) {
-    if (!PARSECRAFT_RE.test(code)) return null
-    // Phase 1 (MVP): mark files that use parsecraft for future AOT expansion.
-    // The runtime compile() function is fully capable; this hook will grow into
-    // full AST rewriting in phase 2.
-    return {
-      code,
-      map: null,
-    }
+    if (!code.includes('parsecraft')) return null
+    if (!code.includes('macro')) return null
+    const moduleAliases = new Set([PARSECRAFT_MODULE, ...(opts.moduleAliases ?? [])])
+    return transformMacro(code, id, moduleAliases)
   },
 }))
 
-export default parsecraftPlugin
+// ---------------------------------------------------------------------------
+// Core transform (exported for testing)
+// ---------------------------------------------------------------------------
+
+type ImportInfo = {
+  start: number
+  end: number
+  names: Set<string>
+  fullyResolved: boolean   // mutated after evaluation
+}
+
+export function transformMacro(
+  code: string,
+  id: string,
+  moduleAliases = new Set([PARSECRAFT_MODULE]),
+): { code: string; map: ReturnType<MagicString['generateMap']> } | null {
+  let result: ReturnType<typeof parseSync>
+  try {
+    result = parseSync(id, code)
+  } catch {
+    return null
+  }
+  if (result.errors.length > 0) return null
+
+  const body = result.program.body
+
+  // --- Pass 1: collect macro imports ---
+  const macroImports: ImportInfo[] = []
+  const allNames = new Set<string>()
+
+  for (const stmt of body) {
+    if (stmt.type !== 'ImportDeclaration') continue
+    const s = stmt as ImportDeclaration
+    if (!moduleAliases.has(s.source.value)) continue
+
+    // Check `with { type: 'macro' }` — oxc exposes this as ImportDeclaration.attributes
+    const isMacro = s.attributes.some(a => {
+      const key = a.key.type === 'Identifier' ? a.key.name : String(a.key.value)
+      return key === 'type' && a.value.value === 'macro'
+    })
+    if (!isMacro) continue
+
+    const names = new Set<string>()
+    for (const spec of s.specifiers) {
+      if (spec.type === 'ImportSpecifier') names.add(spec.local.name)
+    }
+    macroImports.push({ start: s.start, end: s.end, names, fullyResolved: false })
+    for (const n of names) allNames.add(n)
+  }
+
+  if (macroImports.length === 0) return null
+
+  // --- Pass 2: evaluate declarations in source order ---
+  const scope: Scope = new Map<string, Parser<unknown>>()
+  const replacements: Array<{ start: number; end: number; replacement: string }> = []
+  let anyUnresolved = false
+
+  for (const stmt of body as Statement[]) {
+    if (stmt.type !== 'VariableDeclaration') continue
+
+    for (const decl of stmt.declarations) {
+      const d = decl as VariableDeclarator
+      if (!d.init) continue
+      if (d.id.type !== 'Identifier') continue
+
+      const varName = d.id.name
+      const init = d.init as Expression
+
+      if (!referencesAny(init, allNames, scope)) continue
+
+      const parser = evaluateExpr(init, scope)
+      if (parser === null) { anyUnresolved = true; continue }
+
+      const compiled = compile(parser)
+      if (compiled.inlineExpression === null) { anyUnresolved = true; continue }
+
+      replacements.push({
+        start: init.start,
+        end: init.end,
+        replacement: compiled.inlineExpression,
+      })
+
+      scope.set(varName, parser)
+    }
+  }
+
+  if (replacements.length === 0) return null
+
+  // If every declaration referencing an imported name was successfully inlined,
+  // the import is no longer needed. Otherwise downgrade to runtime.
+  for (const imp of macroImports) {
+    imp.fullyResolved = !anyUnresolved
+  }
+
+  const ms = new MagicString(code)
+
+  for (const imp of macroImports) {
+    if (imp.fullyResolved) {
+      ms.remove(imp.start, imp.end)
+    } else {
+      // Strip only the macro attribute, keep the import
+      const original = code.slice(imp.start, imp.end)
+      const stripped = original
+        .replace(/\s+with\s*\{[^}]*\}/gs, '')
+        .replace(/\s+assert\s*\{[^}]*\}/gs, '')
+      ms.overwrite(imp.start, imp.end, stripped)
+    }
+  }
+
+  for (const { start, end, replacement } of [...replacements].sort((a, b) => b.start - a.start)) {
+    ms.overwrite(start, end, replacement)
+  }
+
+  return {
+    code: ms.toString(),
+    map: ms.generateMap({ hires: true }),
+  }
+}

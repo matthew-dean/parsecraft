@@ -97,8 +97,9 @@ function emitLit(def: Extract<ParserDef, { tag: 'lit' }>, ctx: Ctx, pos: string)
       `${ind(ctx)}const ${vv} = ${JSON.stringify(value)}`,
     )
   } else {
+    const firstCode = value.codePointAt(0)!
     stmts.push(
-      `${ind(ctx)}if (${pos} + ${len} > input.length || input.slice(${pos}, ${pos} + ${len}) !== ${JSON.stringify(value)}) ${failStmt({ ...ctx, indent: 0 }, expectedStr, pos).trim()}`,
+      `${ind(ctx)}if (${pos} + ${len} > input.length || input.charCodeAt(${pos}) !== ${firstCode} || input.slice(${pos}, ${pos} + ${len}) !== ${JSON.stringify(value)}) ${failStmt({ ...ctx, indent: 0 }, expectedStr, pos).trim()}`,
       `${ind(ctx)}const ${vv} = ${JSON.stringify(value)}`,
     )
   }
@@ -260,8 +261,55 @@ function emitOptional(def: Extract<ParserDef, { tag: 'optional' }>, ctx: Ctx, po
   return { stmts, valueVar: valV, endVar: endV }
 }
 
-function emitSepBy(p: Parser<unknown>, _def: Extract<ParserDef, { tag: 'sepBy' }>, ctx: Ctx, pos: string): ER {
-  return emitRuntimeFallback(p, ctx, pos)
+function emitSepBy(_p: Parser<unknown>, def: Extract<ParserDef, { tag: 'sepBy' }>, ctx: Ctx, pos: string): ER {
+  const arrV = v(ctx, '_arr')
+  const curV = v(ctx, '_cur')
+
+  // IIFE helpers — inner emit at indent 0 to avoid nested indentation noise
+  const iife = (inner: Parser<unknown>, posExpr: string): string => {
+    const saved = ctx.indent
+    ctx.indent = 0
+    const r = emit(inner, ctx, posExpr)
+    ctx.indent = saved
+    return asIIFE(r.stmts, r.valueVar, r.endVar, posExpr, ind(ctx))
+  }
+
+  const firstR_saved = ctx.indent
+  ctx.indent = 0
+  const firstR = emit(def.parser, ctx, pos)
+  ctx.indent = firstR_saved
+
+  const firstV = v(ctx, '_sb0')
+  const sepV = v(ctx, '_sbs')
+  const nextV = v(ctx, '_sbn')
+
+  const stmts: string[] = [
+    `${ind(ctx)}const ${arrV} = []`,
+    `${ind(ctx)}let ${curV} = ${pos}`,
+    `${ind(ctx)}const ${firstV} = (() => { try { return ${asIIFE(firstR.stmts, firstR.valueVar, firstR.endVar, pos, ind(ctx))} } catch { return null } })()`,
+    `${ind(ctx)}if (${firstV}?.ok) {`,
+  ]
+  ctx.indent++
+  stmts.push(
+    `${ind(ctx)}${arrV}.push(${firstV}.value)`,
+    `${ind(ctx)}${curV} = ${firstV}.span.end`,
+    `${ind(ctx)}while (${curV} < input.length) {`,
+  )
+  ctx.indent++
+  stmts.push(
+    `${ind(ctx)}const ${sepV} = (() => { try { return ${iife(def.separator, curV)} } catch { return null } })()`,
+    `${ind(ctx)}if (!${sepV}?.ok) break`,
+    `${ind(ctx)}const ${nextV} = (() => { try { return ${iife(def.parser, `${sepV}.span.end`)} } catch { return null } })()`,
+    `${ind(ctx)}if (!${nextV}?.ok) break`,
+    `${ind(ctx)}${arrV}.push(${nextV}.value)`,
+    `${ind(ctx)}${curV} = ${nextV}.span.end`,
+  )
+  ctx.indent--
+  stmts.push(`${ind(ctx)}}`)
+  ctx.indent--
+  stmts.push(`${ind(ctx)}}`)
+
+  return { stmts, valueVar: arrV, endVar: curV }
 }
 
 function emitRuntimeFallback(parser: Parser<unknown>, ctx: Ctx, pos: string): ER {
@@ -339,6 +387,14 @@ export type CompiledParser<T> = {
   parse(input: string, pos?: number): ParseResult<T>
   /** The generated source (for inspection / future source maps) */
   source: string
+  /**
+   * A self-contained JS expression (IIFE) that evaluates to a parse function.
+   * Safe to inline directly into transformed source — no external references
+   * except for runtime-fallback parsers embedded via closures.
+   * Returns null if the parser cannot be fully inlined (e.g. contains user
+   * closures that can't be serialized).
+   */
+  inlineExpression: string | null
 }
 
 export function compile<T>(parser: Parser<T>): CompiledParser<T> {
@@ -383,10 +439,47 @@ export function compile<T>(parser: Parser<T>): CompiledParser<T> {
 
   const defaultCtx: ParseContext = { trackLines: false }
 
+  // Build an inline expression only when there are no runtime fallbacks or
+  // map-function closures that can't be serialized.
+  const canInline = ctx.runtimeParsers.length === 0 && ctx.mapFns.length === 0
+  const inlineExpression: string | null = canInline ? buildInlineExpression(ctx, r, collatorDecl) : null
+
   return {
     source,
+    inlineExpression,
     parse(input: string, pos = 0): ParseResult<T> {
       return fn(input, pos, ctx.runtimeParsers, ctx.mapFns, defaultCtx)
     },
   }
+}
+
+function buildInlineExpression(
+  ctx: Ctx,
+  r: ER,
+  collatorDecl: string,
+): string {
+  const bodyLines = [
+    `  let pos = _pos`,
+    ...r.stmts.map(s => `  ${s}`),
+    `  return { ok: true, value: ${r.valueVar}, span: { start: _pos, end: ${r.endVar} } }`,
+  ]
+
+  const innerFn = [
+    `function(input, _pos, _ctx) {`,
+    ...bodyLines,
+    `}`,
+  ].join('\n')
+
+  if (ctx.regexDecls.length === 0 && !collatorDecl) {
+    return innerFn
+  }
+
+  // Wrap in IIFE to hoist regex/collator declarations
+  return [
+    `/* @__PURE__ */ (() => {`,
+    ...ctx.regexDecls.map(d => `  ${d}`),
+    collatorDecl ? `  ${collatorDecl.trim()}` : '',
+    `  return ${innerFn}`,
+    `})()`,
+  ].filter(Boolean).join('\n')
 }

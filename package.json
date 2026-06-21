@@ -1,8 +1,15 @@
 {
   "name": "parsecraft",
   "version": "0.1.0",
-  "description": "Compile-time macro parser combinators with optimized output",
+  "description": "Parser combinators that compile to optimized JavaScript — use as a library or as a build-time macro",
   "type": "module",
+  "author": "Matthew Dean <md@geniuslink.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matthew-dean/parsecraft.git"
+  },
+  "homepage": "https://github.com/matthew-dean/parsecraft",
+  "bugs": "https://github.com/matthew-dean/parsecraft/issues",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,6 +44,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@oxc-project/types": "~0.137.0",
     "@types/node": "~26.0.0",
     "esbuild": "~0.28.1",
     "tsup": "~8.5.1",
@@ -45,6 +53,8 @@
     "vitest": "~4.1.9"
   },
   "dependencies": {
+    "magic-string": "~0.30.21",
+    "oxc-parser": "~0.137.0",
     "regexp-tree": "~0.1.27",
     "unplugin": "~3.0.0"
   }

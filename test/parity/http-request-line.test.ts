@@ -6,7 +6,7 @@
  *   METHOD SP request-target SP HTTP/1.x CRLF
  */
 import { describe, it, expect } from 'vitest'
-import { lit, seq, choice, regex, map, parse } from '../../src/index.ts'
+import { lit, seq, choice, regex, map, parse, compile } from '../../src/index.ts'
 
 type RequestLine = {
   method: string
@@ -62,6 +62,27 @@ describe('HTTP request line — runtime parity', () => {
     const ref = referenceParser('BREW / HTTP/1.1\r\n')
     const result = parse(requestLine, 'BREW / HTTP/1.1\r\n')
     expect(ref).toBeNull()
+    expect(result.ok).toBe(false)
+  })
+})
+
+describe('HTTP request line — compiled parity', () => {
+  const compiled = compile(requestLine)
+
+  for (const input of cases) {
+    it(`parses: ${JSON.stringify(input)}`, () => {
+      const interpreted = parse(requestLine, input)
+      const result = compiled.parse(input)
+      expect(result.ok).toBe(interpreted.ok)
+      if (result.ok && interpreted.ok) {
+        expect(result.value).toEqual(interpreted.value)
+        expect(result.span).toEqual(interpreted.span)
+      }
+    })
+  }
+
+  it('fails on unknown method', () => {
+    const result = compiled.parse('BREW / HTTP/1.1\r\n')
     expect(result.ok).toBe(false)
   })
 })

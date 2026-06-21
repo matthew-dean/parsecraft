@@ -1,4 +1,5 @@
 import type { Parser, ParseContext, ParseResult } from '../types.ts'
+import { buildLineIndex, annotateSpan } from '../compiler/line-index.ts'
 
 export type GrammarOptions = {
   trivia?: Parser<unknown>
@@ -16,10 +17,16 @@ export function grammar<T>(opts: GrammarOptions, root: Parser<T>): Parser<T> {
       trackLines: opts.trackLines ?? false,
     },
     parse(input: string, pos: number, _ctx: ParseContext): ParseResult<T> {
+      const trackLines = opts.trackLines ?? false
       const ctx: ParseContext = opts.trivia !== undefined
-        ? { trivia: opts.trivia, trackLines: opts.trackLines ?? false }
-        : { trackLines: opts.trackLines ?? false }
-      return root.parse(input, pos, ctx)
+        ? { trivia: opts.trivia, trackLines }
+        : { trackLines }
+      const result = root.parse(input, pos, ctx)
+      if (trackLines) {
+        const idx = buildLineIndex(input)
+        return { ...result, span: annotateSpan(result.span, idx) }
+      }
+      return result
     },
   }
 }
@@ -29,8 +36,14 @@ export function parse<T>(
   input: string,
   opts: GrammarOptions = {}
 ): ParseResult<T> {
+  const trackLines = opts.trackLines ?? false
   const ctx: ParseContext = opts.trivia !== undefined
-    ? { trivia: opts.trivia, trackLines: opts.trackLines ?? false }
-    : { trackLines: opts.trackLines ?? false }
-  return parser.parse(input, 0, ctx)
+    ? { trivia: opts.trivia, trackLines }
+    : { trackLines }
+  const result = parser.parse(input, 0, ctx)
+  if (trackLines) {
+    const idx = buildLineIndex(input)
+    return { ...result, span: annotateSpan(result.span, idx) }
+  }
+  return result
 }

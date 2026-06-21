@@ -1,37 +1,10 @@
 # parsecraft
 
-Compile-time parser combinators for TypeScript. Write parsers in a familiar combinator style; parsecraft compiles them into optimized, allocation-efficient JavaScript at build time.
+Parser combinators that compile to optimized JavaScript.
 
-```ts
-import { seq, choice, lit, regex, many, map, compile } from 'parsecraft'
+Write parsers in a familiar combinator style. Use them directly as an interpreter, or import with `{ type: 'macro' }` and the bundler plugin inlines each parser as a hand-crafted function — `charCodeAt` dispatch, `while` loops, zero allocation on failed paths. Both modes produce identical results.
 
-const method = choice(lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'))
-const requestLine = map(
-  seq(method, lit(' '), regex(/[^\s]+/), lit(' HTTP/'), regex(/1\.[01]/)),
-  ([verb, , target, , version]) => ({ verb, target, version })
-)
-
-// Runtime interpreter — always available, useful for tests
-import { parse } from 'parsecraft'
-const result = parse(requestLine, 'GET /api/v1 HTTP/1.1')
-
-// Compiled — optimized JS emitted at build time (or via compile() at runtime)
-const compiled = compile(requestLine)
-compiled.parse('POST /api/v2 HTTP/1.0')
-```
-
-## Features
-
-- **Disjoint-first-set dispatch** — `choice()` analyzes the first character of each alternative. When they don't overlap, it dispatches without backtracking.
-- **Optimized literal matching** — `lit()` emits `charCodeAt` comparisons for strings ≤ 4 chars; `slice` comparison for longer ones.
-- **Loop compilation** — `many()` / `many1()` compile to `while` loops.
-- **Case-insensitive literals** — via a cached `Intl.Collator` with `sensitivity: 'accent'`.
-- **Regex optimization** — patterns pass through `regexp-tree`'s optimizer before use.
-- **First-set extraction** — regexes are analyzed statically to determine what characters can start them, enabling disjoint dispatch in `choice`.
-- **Line/column tracking** — `buildLineIndex` + `annotateSpan` give O(log n) offset→line/col lookup via binary search on a precomputed newline array. Only parsers that `canMatchNewline` pay any cost.
-- **Trivia (whitespace/comments)** — `grammar({ trivia: skip(regex(/\s+/)) }, root)` auto-skips whitespace between `seq` terms.
-
-## Installation
+## Install
 
 ```bash
 npm install parsecraft
@@ -39,79 +12,130 @@ npm install parsecraft
 pnpm add parsecraft
 ```
 
-Requires **TypeScript 5.7+** (TypeScript 7 RC recommended).
+## Interpreter mode
+
+No build step required — works anywhere.
+
+```ts
+import { lit, seq, choice, regex, map, parse } from 'parsecraft'
+
+const method = choice(lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'))
+
+const requestLine = map(
+  seq(method, lit(' '), regex(/[^\s]+/), lit(' HTTP/'), regex(/1\.[01]/)),
+  ([verb, , target, , version]) => ({ verb, target, version })
+)
+
+const result = parse(requestLine, 'GET /api/v1 HTTP/1.1')
+// { ok: true, value: { verb: 'GET', target: '/api/v1', version: '1.1' }, span: ... }
+```
+
+## Macro mode (recommended for production)
+
+Add the plugin to your bundler:
+
+```ts
+// vite.config.ts
+import parsecraft from 'parsecraft/plugin'
+export default { plugins: [parsecraft()] }
+
+// rollup.config.js
+import parsecraft from 'parsecraft/plugin'
+export default { plugins: [parsecraft.rollup()] }
+
+// webpack.config.js
+const parsecraft = require('parsecraft/plugin')
+module.exports = { plugins: [parsecraft.webpack()] }
+```
+
+Then just add `with { type: 'macro' }` to the import — no other changes:
+
+```ts
+import { lit, seq, choice, regex, map } from 'parsecraft' with { type: 'macro' }
+
+// Same combinator code — the plugin evaluates it at build time and
+// replaces each variable with an optimized inline function.
+const method = choice(lit('GET'), lit('POST'), lit('PUT'), lit('DELETE'))
+
+const requestLine = map(
+  seq(method, lit(' '), regex(/[^\s]+/), lit(' HTTP/'), regex(/1\.[01]/)),
+  ([verb, , target, , version]) => ({ verb, target, version })
+)
+```
+
+The `parsecraft` import disappears entirely from the output. Each parser variable becomes a self-contained function expression.
+
+Parser variables that reference user closures (like `map()` with an arrow function) keep their runtime form — only pure combinator trees are inlined.
 
 ## Combinators
 
 | Combinator | Description |
 |---|---|
 | `lit(value, opts?)` | Match a literal string. `opts.caseInsensitive` uses `Intl.Collator`. |
-| `regex(pattern, flags?)` | Match a regex anchored at the current position. |
-| `seq(...parsers)` | Match all parsers in order. Returns a tuple. |
-| `choice(...parsers)` | Try alternatives in order. Uses first-set dispatch when disjoint. |
-| `many(parser)` | Zero or more. Compiles to a `while` loop. |
-| `many1(parser)` | One or more. Fails if the first match fails. |
-| `optional(parser)` | Zero or one. Always succeeds; value is `null` if not matched. |
-| `sepBy(parser, sep)` | Zero or more occurrences of `parser` separated by `sep`. |
-| `map(parser, fn)` | Transform the result value. |
-| `skip(main, skipped)` | Match `main`, then optionally consume `skipped`. |
-| `trivia(parser)` | Mark a parser as trivia (used by `grammar`). |
-| `grammar(opts, root)` | Set grammar-wide options: `trivia` and `trackLines`. |
+| `regex(pattern)` | Match a regex at the current position. Patterns pass through `regexp-tree` optimizer. |
+| `seq(...parsers)` | Match all parsers in order; returns a tuple `[v1, v2, ...]`. |
+| `choice(...parsers)` | Try alternatives in order. Disjoint first characters → O(1) dispatch. |
+| `many(parser)` | Zero or more repetitions; compiles to a `while` loop. |
+| `many1(parser)` | One or more; fails if no match at all. |
+| `optional(parser)` | Zero or one; returns `null` if not matched. |
+| `sepBy(parser, sep)` | Zero or more `parser` separated by `sep`. |
+| `map(parser, fn)` | Transform the matched value with `fn(value, span)`. |
+| `skip(main, skipped)` | Match `main`, then optionally skip `skipped`. Returns `main`'s value. |
+| `trivia(parser)` | Mark a parser as trivia. Used by `grammar()` for auto-skipping. |
+| `grammar(opts, root)` | Set grammar-wide options (`trivia`, `trackLines`) on a root parser. |
 
-## Compile
+## Trivia (whitespace / comment skipping)
 
 ```ts
-import { compile } from 'parsecraft'
+import { lit, regex, map, trivia, grammar, sepBy, parse } from 'parsecraft'
 
-const compiled = compile(myParser)
-const result = compiled.parse('input string')
-// result: ParseResult<T>
-// compiled.source: the generated JS (for inspection)
+const ws = trivia(regex(/\s+/))
+const word = regex(/[a-z]+/)
+
+const list = grammar(
+  { trivia: ws },
+  sepBy(word, lit(','))
+)
+
+parse(list, 'foo ,  bar , baz')
+// { ok: true, value: ['foo', 'bar', 'baz'], ... }
 ```
 
-`compile()` works at both runtime and build time. The unplugin (below) moves the `compile()` call to your bundler so the generated code ships as static JS — no `new Function()` at runtime.
+When `trivia` is set, `seq()` automatically skips trivia between its terms.
 
-## Line/column tracking
+## Line / column tracking
 
 ```ts
-import { buildLineIndex, annotateSpan, parse } from 'parsecraft'
+import { lit, seq, parse } from 'parsecraft'
 
-const input = 'line one\nline two\nline three'
-const idx = buildLineIndex(input)
+const p = seq(lit('hello'), lit('\n'), lit('world'))
+const result = parse(p, 'hello\nworld', { trackLines: true })
 
-const result = parse(myParser, input)
 if (result.ok) {
-  const annotated = annotateSpan(result.span, idx)
-  // annotated.startLine, startColumn, endLine, endColumn
+  result.span.startLine    // 1
+  result.span.startColumn  // 1
+  result.span.endLine      // 2
+  result.span.endColumn    // 6
 }
 ```
 
-## Bundler plugin
+Line/column lookup is O(log n) via binary search on a precomputed newline index.
+You can also call `buildLineIndex` + `annotateSpan` manually for more control.
 
-Add to your bundler config so parsecraft can analyze and AOT-compile your parsers:
+## compile()
 
-```ts
-// vite.config.ts
-import parsecraft from 'parsecraft/plugin'
-
-export default {
-  plugins: [parsecraft()],
-}
-```
+Call `compile()` directly to get an optimized parser at runtime — the same code the macro plugin inlines at build time:
 
 ```ts
-// rollup.config.js
-import parsecraft from 'parsecraft/plugin'
-export default { plugins: [parsecraft.rollup()] }
-```
+import { choice, lit, compile } from 'parsecraft'
 
-```ts
-// webpack.config.js
-const parsecraft = require('parsecraft/plugin')
-module.exports = { plugins: [parsecraft.webpack()] }
-```
+const parser = choice(lit('yes'), lit('no'))
+const compiled = compile(parser)
 
-The plugin currently validates parsecraft imports and prepares for phase-2 AOT rewriting. Full AST-level `compile()` call inlining is the next release.
+compiled.parse('yes')          // { ok: true, value: 'yes', span: { start: 0, end: 3 } }
+compiled.source                // generated JS source string
+compiled.inlineExpression      // self-contained expression (used internally by the plugin)
+```
 
 ## ParseResult
 
@@ -124,27 +148,41 @@ type ParseOk<T> = {
 
 type ParseFail = {
   ok: false
-  expected: string[]  // what was expected at the failure point
+  expected: string[]   // what was expected at the failure point
   span: Span
 }
 
 type Span = {
-  start: number        // byte offset
-  end: number
-  startLine?: number   // set by annotateSpan()
-  startColumn?: number
+  start: number          // byte offset, inclusive
+  end: number            // byte offset, exclusive
+  startLine?: number     // 1-based; populated when trackLines: true
+  startColumn?: number   // 1-based
   endLine?: number
   endColumn?: number
 }
 ```
 
+## Choice optimization
+
+`choice()` statically analyzes the first-character set of each alternative. When they're pairwise disjoint, it compiles to a single `codePointAt` dispatch — no backtracking, no sequential tries:
+
+```ts
+// Compiles to: if (code === 71 /*G*/) { ...GET... }
+//              else if (code === 80 /*P*/) { ...POST... }
+//              else if (code === 68 /*D*/) { ...DELETE... }
+//              else return { ok: false, ... }
+const method = choice(lit('GET'), lit('POST'), lit('DELETE'))
+```
+
+When alternatives share a first character, it tries each in order with IIFE-wrapped early returns.
+
 ## Developing
 
 ```bash
 pnpm install
-pnpm test          # run tests
-pnpm typecheck     # type-check with TypeScript 7
-pnpm build         # emit dist/ (ESM + CJS + declarations)
+pnpm test          # Vitest suite (interpreter + compiler parity)
+pnpm typecheck     # TypeScript 7
+pnpm build         # ESM + CJS + .d.ts into dist/
 ```
 
 ## License
