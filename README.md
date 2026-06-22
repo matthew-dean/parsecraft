@@ -16,7 +16,7 @@ Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
 
 ![CSV parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-csv.svg)
 
-Parséman compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parséman compiled wins going away.
+Parséman compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parséman compiled is the clear winner.
 
 ---
 
