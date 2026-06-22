@@ -4,7 +4,7 @@
 
 # Parmésan (PAR-zə-mahn)
 
-Write parsers with combinators, then let the bundler plugin compile them to optimized inline functions at build time — `charCodeAt` dispatch, `while` loops, zero allocation on failure paths. No generated boilerplate, no codegen step, no separate schema files.
+Write parsers with combinators, then let the bundler plugin compile them to optimized inline functions at build time — `charCodeAt` dispatch, `while` loops, zero allocation on failure paths. Your parsers are just TypeScript — the plugin optimizes them at build time, invisibly. Easy to write, easy to debug.
 
 The same code runs without the plugin: the interpreter produces identical results. Use the macro build for production; skip it in tests and anywhere a bundler isn't in the picture.
 
