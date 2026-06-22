@@ -274,7 +274,7 @@ describe('Parser — custom AST via buildNode()', () => {
     expect(doc.tree).not.toBeNull()
     expect((doc.tree as MyNode).text).toBe('[Num:0-2]')
 
-    const doc2 = doc.edit('999', 0, 2)
+    const doc2 = doc.edit(0, 2, '999')
     expect(doc2.tree).not.toBeNull()
     expect((doc2.tree as MyNode).text).toBe('[Num:0-3]')
   })

@@ -66,46 +66,46 @@ describe('ParseDoc — full parse', () => {
 // ---------------------------------------------------------------------------
 describe('ParseDoc — edit', () => {
   it('edit on failed parse falls back to full parse', () => {
-    const doc = g.parse('Object', '').edit('{x:1}', 0, 0)
+    const doc = g.parse('Object', '').edit(0, 0, '{x:1}')
     expect(doc.tree).not.toBeNull()
     expect(doc.tree!.type).toBe('Object')
   })
 
   it('replacing a value returns a valid tree', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{a:42}', 3, 4)
+    const doc = g.parse('Object', '{a:1}').edit(3, 4, '42')
     expect(doc.tree).not.toBeNull()
     expect(doc.tree!.type).toBe('Object')
   })
 
   it('carries updated input after edit', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{a:42}', 3, 4)
+    const doc = g.parse('Object', '{a:1}').edit(3, 4, '42')
     expect(doc.input).toBe('{a:42}')
   })
 
   it('adding a pair to the object', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{a:1,b:2}', 4, 4)
+    const doc = g.parse('Object', '{a:1}').edit(4, 4, ',b:2')
     expect(doc.tree).not.toBeNull()
     const pairs = doc.tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
     expect(pairs.length).toBe(2)
   })
 
   it('removing a pair from the object', () => {
-    const doc = g.parse('Object', '{a:1,b:2}').edit('{a:1}', 4, 8)
+    const doc = g.parse('Object', '{a:1,b:2}').edit(4, 8, '')
     expect(doc.tree).not.toBeNull()
     const pairs = doc.tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
     expect(pairs.length).toBe(1)
   })
 
   it('edit to invalid input returns null tree with errors', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{a:', 3, 5)
+    const doc = g.parse('Object', '{a:1}').edit(3, 5, '')
     expect(doc.tree).toBeNull()
     expect(doc.errors.length).toBeGreaterThan(0)
   })
 
   it('successive edits chain correctly', () => {
     const doc = g.parse('Object', '{x:1}')
-      .edit('{x:10}', 4, 5)
-      .edit('{x:100}', 5, 6)
+      .edit(4, 4, '0')
+      .edit(5, 5, '0')
     expect(doc.tree).not.toBeNull()
     expect(doc.tree!.type).toBe('Object')
   })
@@ -120,7 +120,7 @@ describe('ParseDoc — immutable tree', () => {
     const originalSpan = { ...doc1.tree!.span }
     const originalChildCount = doc1.tree!.children.length
 
-    doc1.edit('{a:42}', 3, 4)
+    doc1.edit(3, 4, '42')
 
     expect(doc1.tree!.span).toEqual(originalSpan)
     expect(doc1.tree!.children.length).toBe(originalChildCount)
@@ -133,7 +133,7 @@ describe('ParseDoc — immutable tree', () => {
     ) as CSTNode | undefined
     expect(firstPairBefore).toBeDefined()
 
-    const doc2 = doc1.edit('{a:1,b:99}', 7, 8)
+    const doc2 = doc1.edit(7, 8, '99')
     const firstPairAfter = doc2.tree!.children.find(
       c => c._tag === 'node' && (c as CSTNode).type === 'Pair'
     ) as CSTNode | undefined
@@ -162,7 +162,7 @@ describe('ParseDoc — context-sensitive', () => {
   const lang = new LangGrammar()
 
   it('incremental re-parse of a Body node uses saved inFn:true context', () => {
-    const doc = lang.parse('Program', 'return ').edit('return return ', 7, 7)
+    const doc = lang.parse('Program', 'return ').edit(7, 7, 'return ')
     expect(doc.tree).not.toBeNull()
   })
 
@@ -192,17 +192,17 @@ describe('ParseDoc — context-sensitive', () => {
 // ---------------------------------------------------------------------------
 describe('ParseDoc — edge cases', () => {
   it('edit at the very start of input', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{ a:1}', 1, 1)
+    const doc = g.parse('Object', '{a:1}').edit(1, 1, ' ')
     expect(doc.tree).not.toBeNull()
   })
 
   it('zero-length edit (pure insertion)', () => {
-    const doc = g.parse('Object', '{a:1}').edit('{ab:1}', 2, 2)
+    const doc = g.parse('Object', '{a:1}').edit(2, 2, 'b')
     expect(doc.tree).not.toBeNull()
   })
 
   it('edit that deletes everything falls back gracefully', () => {
-    const doc = g.parse('Object', '{a:1}').edit('', 0, 5)
+    const doc = g.parse('Object', '{a:1}').edit(0, 5, '')
     expect(doc.tree).toBeNull()
   })
 })

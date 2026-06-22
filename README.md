@@ -365,7 +365,7 @@ vscode.workspace.onDidChangeTextDocument(event => {
   const uri = event.document.uri.toString()
   let doc = docs.get(uri)!
   for (const change of event.contentChanges) {
-    doc = doc.edit(event.document.getText(), change.rangeOffset, change.rangeOffset + change.rangeLength)
+    doc = doc.edit(change.rangeOffset, change.rangeOffset + change.rangeLength, change.text)
   }
   docs.set(uri, doc)
   // walk doc.tree to emit diagnostics, folding ranges, semantic tokens, etc.

@@ -21,7 +21,19 @@ export interface ParseDoc<N extends NodeLike = NodeLike> {
   readonly tree: N | null
   readonly errors: ParseFail[]
   readonly input: string
-  edit(newInput: string, editStart: number, editEnd: number): ParseDoc<N>
+  /**
+   * Incrementally re-parse after a text change.
+   *
+   * @param changeStart  Byte offset where the change begins (same in old and new text).
+   * @param oldChangeEnd Byte offset where the replaced region ends in the OLD text (exclusive).
+   * @param newText      The replacement text (may be empty for a pure deletion).
+   *
+   * Maps directly to editor change events:
+   *   VSCode:     doc.edit(change.rangeOffset, change.rangeOffset + change.rangeLength, change.text)
+   *   CodeMirror: doc.edit(change.from, change.to, change.insert)
+   *   LSP:        doc.edit(startByte, endByte, change.text)  // after line/col → byte conversion
+   */
+  edit(changeStart: number, oldChangeEnd: number, newText: string): ParseDoc<N>
 }
 
 // ---------------------------------------------------------------------------
@@ -95,11 +107,13 @@ class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
     this.input     = input
   }
 
-  edit(newInput: string, editStart: number, editEnd: number): ParseDoc<N> {
+  edit(changeStart: number, oldChangeEnd: number, newText: string): ParseDoc<N> {
+    const newInput = this.input.slice(0, changeStart) + newText + this.input.slice(oldChangeEnd)
+
     if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
 
-    const delta = newInput.length - this.input.length
-    const found = findContaining(this.tree, editStart)
+    const delta = newText.length - (oldChangeEnd - changeStart)
+    const found = findContaining(this.tree, changeStart)
     if (!found) return makeParseDoc(this._parser, this._ruleName, newInput)
 
     const ancestors = ancestorsAt(this.tree, found.path)
