@@ -81,13 +81,19 @@ function replaceAtPath<N extends NodeLike>(
 // ---------------------------------------------------------------------------
 
 class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
-  constructor(
-    private readonly _parser: Parser<N>,
-    private readonly _ruleName: string,
-    public readonly tree: N | null,
-    public readonly errors: ParseFail[],
-    public readonly input: string,
-  ) {}
+  private readonly _parser: Parser<N>
+  private readonly _ruleName: string
+  readonly tree: N | null
+  readonly errors: ParseFail[]
+  readonly input: string
+
+  constructor(parser: Parser<N>, ruleName: string, tree: N | null, errors: ParseFail[], input: string) {
+    this._parser   = parser
+    this._ruleName = ruleName
+    this.tree      = tree
+    this.errors    = errors
+    this.input     = input
+  }
 
   edit(newInput: string, editStart: number, editEnd: number): ParseDoc<N> {
     if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
