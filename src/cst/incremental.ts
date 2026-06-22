@@ -24,8 +24,9 @@ export interface ParseDoc<N extends NodeLike = NodeLike> {
   /**
    * Incrementally re-parse after a text change.
    *
-   * Think of it as "select from → to, type text": both `from` and `to` are
-   * byte offsets in the OLD input. `text` is what replaces that range.
+   * Think of it as "select from → to, replace with replacement": both `from`
+   * and `to` are byte offsets in the OLD input. `replacement` is what fills
+   * that range in the new text.
    *
    *   doc.edit(3, 7, 'hi')  →  old: "foo [XXXX] bar"   new: "foo hi bar"
    *                                       ↑    ↑
@@ -36,7 +37,7 @@ export interface ParseDoc<N extends NodeLike = NodeLike> {
    *   CodeMirror 6:     doc.edit(change.from, change.to, change.insert)
    *   LSP:              doc.edit(startByte, endByte, change.text)  // after line/col → byte offset
    */
-  edit(from: number, to: number, text: string): ParseDoc<N>
+  edit(from: number, to: number, replacement: string): ParseDoc<N>
 }
 
 // ---------------------------------------------------------------------------
@@ -110,12 +111,12 @@ class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
     this.input     = input
   }
 
-  edit(from: number, to: number, text: string): ParseDoc<N> {
-    const newInput = this.input.slice(0, from) + text + this.input.slice(to)
+  edit(from: number, to: number, replacement: string): ParseDoc<N> {
+    const newInput = this.input.slice(0, from) + replacement + this.input.slice(to)
 
     if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
 
-    const delta = text.length - (to - from)
+    const delta = replacement.length - (to - from)
     const found = findContaining(this.tree, from)
     if (!found) return makeParseDoc(this._parser, this._ruleName, newInput)
 
