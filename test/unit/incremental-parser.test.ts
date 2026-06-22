@@ -3,16 +3,14 @@ import {
   literal, regex, sequence, choice, many, optional, sepBy,
   parse, withCtx, guard,
 } from '../../src/index.ts'
-import { IncrementalParser } from '../../src/index.ts'
+import { Parser } from '../../src/index.ts'
 import type { Refs } from '../../src/index.ts'
 import type { CSTNode } from '../../src/index.ts'
 
 // ---------------------------------------------------------------------------
 // Simple grammar for all basic tests
 // ---------------------------------------------------------------------------
-class JsonLikeGrammar extends IncrementalParser {
-  constructor() { super('Object') }
-
+class JsonLikeGrammar extends Parser {
   ws     = regex(/\s*/)
   digits = regex(/[0-9]+/)
   ident  = regex(/[a-zA-Z_]\w*/)
@@ -26,45 +24,39 @@ class JsonLikeGrammar extends IncrementalParser {
   Object = (g: Refs<JsonLikeGrammar>) => sequence(literal('{'), g.ws, g.pairs, g.ws, literal('}'))
 }
 
-function makeParser() {
-  return new JsonLikeGrammar()
-}
+const g = new JsonLikeGrammar()
 
 // ---------------------------------------------------------------------------
 // Full parse
 // ---------------------------------------------------------------------------
-describe('IncrementalParser — full parse', () => {
+describe('ParseDoc — full parse', () => {
   it('parses a simple object', () => {
-    const ip = makeParser()
-    const tree = ip.parse('{a:1}')
-    expect(tree).not.toBeNull()
-    expect(tree!._tag).toBe('node')
-    expect(tree!.type).toBe('Object')
+    const doc = g.parse('Object', '{a:1}')
+    expect(doc.tree).not.toBeNull()
+    expect(doc.tree!._tag).toBe('node')
+    expect(doc.tree!.type).toBe('Object')
   })
 
-  it('returns null on invalid input', () => {
-    const ip = makeParser()
-    const tree = ip.parse('{invalid:')
-    expect(tree).toBeNull()
+  it('returns null tree and errors on invalid input', () => {
+    const doc = g.parse('Object', '{invalid:')
+    expect(doc.tree).toBeNull()
+    expect(doc.errors.length).toBeGreaterThan(0)
   })
 
-  it('stores the full tree in currentTree', () => {
-    const ip = makeParser()
-    const tree = ip.parse('{x:1}')
-    expect(ip.currentTree).toBe(tree)
+  it('carries the input string', () => {
+    const doc = g.parse('Object', '{x:1}')
+    expect(doc.input).toBe('{x:1}')
   })
 
-  it('stores the input in currentInput', () => {
-    const ip = makeParser()
-    ip.parse('{x:1}')
-    expect(ip.currentInput).toBe('{x:1}')
+  it('errors is empty on success', () => {
+    const doc = g.parse('Object', '{x:1}')
+    expect(doc.errors).toHaveLength(0)
   })
 
   it('parsed tree has Pair children', () => {
-    const ip = makeParser()
-    const tree = ip.parse('{a:1,b:2}')
-    expect(tree).not.toBeNull()
-    const pairs = tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
+    const doc = g.parse('Object', '{a:1,b:2}')
+    expect(doc.tree).not.toBeNull()
+    const pairs = doc.tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
     expect(pairs.length).toBe(2)
   })
 })
@@ -72,106 +64,92 @@ describe('IncrementalParser — full parse', () => {
 // ---------------------------------------------------------------------------
 // Incremental edit
 // ---------------------------------------------------------------------------
-describe('IncrementalParser — edit', () => {
-  it('edit after no parse falls back to full parse', () => {
-    const ip = makeParser()
-    const tree = ip.edit('{x:1}', 3, 4)
-    expect(tree).not.toBeNull()
-    expect(tree!.type).toBe('Object')
+describe('ParseDoc — edit', () => {
+  it('edit on failed parse falls back to full parse', () => {
+    const doc = g.parse('Object', '').edit('{x:1}', 0, 0)
+    expect(doc.tree).not.toBeNull()
+    expect(doc.tree!.type).toBe('Object')
   })
 
   it('replacing a value returns a valid tree', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{a:42}', 3, 4)
-    expect(tree).not.toBeNull()
-    expect(tree!.type).toBe('Object')
+    const doc = g.parse('Object', '{a:1}').edit('{a:42}', 3, 4)
+    expect(doc.tree).not.toBeNull()
+    expect(doc.tree!.type).toBe('Object')
   })
 
-  it('currentTree and currentInput are updated after edit', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{a:42}', 3, 4)
-    expect(ip.currentTree).toBe(tree)
-    expect(ip.currentInput).toBe('{a:42}')
+  it('carries updated input after edit', () => {
+    const doc = g.parse('Object', '{a:1}').edit('{a:42}', 3, 4)
+    expect(doc.input).toBe('{a:42}')
   })
 
   it('adding a pair to the object', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{a:1,b:2}', 4, 4)
-    expect(tree).not.toBeNull()
-    const pairs = tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
+    const doc = g.parse('Object', '{a:1}').edit('{a:1,b:2}', 4, 4)
+    expect(doc.tree).not.toBeNull()
+    const pairs = doc.tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
     expect(pairs.length).toBe(2)
   })
 
   it('removing a pair from the object', () => {
-    const ip = makeParser()
-    ip.parse('{a:1,b:2}')
-    const tree = ip.edit('{a:1}', 4, 8)
-    expect(tree).not.toBeNull()
-    const pairs = tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
+    const doc = g.parse('Object', '{a:1,b:2}').edit('{a:1}', 4, 8)
+    expect(doc.tree).not.toBeNull()
+    const pairs = doc.tree!.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Pair')
     expect(pairs.length).toBe(1)
   })
 
-  it('edit to invalid input returns null', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{a:', 3, 5)
-    expect(tree).toBeNull()
+  it('edit to invalid input returns null tree with errors', () => {
+    const doc = g.parse('Object', '{a:1}').edit('{a:', 3, 5)
+    expect(doc.tree).toBeNull()
+    expect(doc.errors.length).toBeGreaterThan(0)
   })
 
-  it('successive edits build on each other', () => {
-    const ip = makeParser()
-    ip.parse('{x:1}')
-    ip.edit('{x:10}', 4, 5)
-    const tree = ip.edit('{x:100}', 5, 6)
-    expect(tree).not.toBeNull()
-    expect(tree!.type).toBe('Object')
+  it('successive edits chain correctly', () => {
+    const doc = g.parse('Object', '{x:1}')
+      .edit('{x:10}', 4, 5)
+      .edit('{x:100}', 5, 6)
+    expect(doc.tree).not.toBeNull()
+    expect(doc.tree!.type).toBe('Object')
   })
 })
 
 // ---------------------------------------------------------------------------
 // Immutable update
 // ---------------------------------------------------------------------------
-describe('IncrementalParser — immutable tree', () => {
-  it('edit does not mutate the original tree', () => {
-    const ip = makeParser()
-    const original = ip.parse('{a:1}')!
-    const originalSpan = { ...original.span }
-    const originalChildCount = original.children.length
+describe('ParseDoc — immutable tree', () => {
+  it('edit does not mutate the original doc', () => {
+    const doc1 = g.parse('Object', '{a:1}')
+    const originalSpan = { ...doc1.tree!.span }
+    const originalChildCount = doc1.tree!.children.length
 
-    ip.edit('{a:42}', 3, 4)
+    doc1.edit('{a:42}', 3, 4)
 
-    expect(original.span).toEqual(originalSpan)
-    expect(original.children.length).toBe(originalChildCount)
+    expect(doc1.tree!.span).toEqual(originalSpan)
+    expect(doc1.tree!.children.length).toBe(originalChildCount)
   })
 
   it('unaffected subtrees are shared (same object reference)', () => {
-    const ip = makeParser()
-    ip.parse('{a:1,b:2}')
-    const beforeTree = ip.currentTree!
-
-    const firstPairBefore = beforeTree.children.find(c => c._tag === 'node' && (c as CSTNode).type === 'Pair') as CSTNode | undefined
+    const doc1 = g.parse('Object', '{a:1,b:2}')
+    const firstPairBefore = doc1.tree!.children.find(
+      c => c._tag === 'node' && (c as CSTNode).type === 'Pair'
+    ) as CSTNode | undefined
     expect(firstPairBefore).toBeDefined()
 
-    const afterTree = ip.edit('{a:1,b:99}', 7, 8)
-    expect(afterTree).not.toBeNull()
-
-    const firstPairAfter = afterTree!.children.find(c => c._tag === 'node' && (c as CSTNode).type === 'Pair') as CSTNode | undefined
+    const doc2 = doc1.edit('{a:1,b:99}', 7, 8)
+    const firstPairAfter = doc2.tree!.children.find(
+      c => c._tag === 'node' && (c as CSTNode).type === 'Pair'
+    ) as CSTNode | undefined
     expect(firstPairAfter).toBeDefined()
+    expect(firstPairAfter).toBe(firstPairBefore)
   })
 })
 
 // ---------------------------------------------------------------------------
 // Context-sensitive incremental parse
 // ---------------------------------------------------------------------------
-describe('IncrementalParser — context-sensitive', () => {
-  class LangGrammar extends IncrementalParser {
-    constructor() { super('Program') }
+describe('ParseDoc — context-sensitive', () => {
+  class LangGrammar extends Parser {
     ws = regex(/\s*/)
 
-    Return = (g: Refs<LangGrammar>) => sequence(
+    Return  = (g: Refs<LangGrammar>) => sequence(
       guard((u: unknown) => (u as { inFn?: boolean } | undefined)?.inFn === true),
       literal('return'),
     )
@@ -181,18 +159,16 @@ describe('IncrementalParser — context-sensitive', () => {
     Program = (g: Refs<LangGrammar>) => many(sequence(g.Body, g.ws))
   }
 
+  const lang = new LangGrammar()
+
   it('incremental re-parse of a Body node uses saved inFn:true context', () => {
-    const ip = new LangGrammar()
-    const tree = ip.parse('return ')
-    expect(tree).not.toBeNull()
-    const tree2 = ip.edit('return return ', 7, 7)
-    expect(tree2).not.toBeNull()
+    const doc = lang.parse('Program', 'return ').edit('return return ', 7, 7)
+    expect(doc.tree).not.toBeNull()
   })
 
-  it('savedContext on Stmt node records inFn:true for incremental re-use', () => {
-    const ip = new LangGrammar()
-    const tree = ip.parse('return ')
-    expect(tree).not.toBeNull()
+  it('savedContext on Stmt node records inFn:true', () => {
+    const doc = lang.parse('Program', 'return ')
+    expect(doc.tree).not.toBeNull()
 
     function findNode(node: CSTNode, type: string): CSTNode | undefined {
       if (node.type === type) return node
@@ -205,7 +181,7 @@ describe('IncrementalParser — context-sensitive', () => {
       return undefined
     }
 
-    const stmt = findNode(tree!, 'Stmt')
+    const stmt = findNode(doc.tree!, 'Stmt')
     expect(stmt).toBeDefined()
     expect((stmt!.savedContext as { inFn?: boolean } | undefined)?.inFn).toBe(true)
   })
@@ -214,32 +190,19 @@ describe('IncrementalParser — context-sensitive', () => {
 // ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
-describe('IncrementalParser — edge cases', () => {
+describe('ParseDoc — edge cases', () => {
   it('edit at the very start of input', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{ a:1}', 1, 1)
-    expect(tree).not.toBeNull()
+    const doc = g.parse('Object', '{a:1}').edit('{ a:1}', 1, 1)
+    expect(doc.tree).not.toBeNull()
   })
 
-  it('edit at the very end of input', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{a:1} ', 5, 5)
-    expect(tree === null || tree !== null).toBe(true)
-  })
-
-  it('zero-length edit (pure insertion) works', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('{ab:1}', 2, 2)
-    expect(tree).not.toBeNull()
+  it('zero-length edit (pure insertion)', () => {
+    const doc = g.parse('Object', '{a:1}').edit('{ab:1}', 2, 2)
+    expect(doc.tree).not.toBeNull()
   })
 
   it('edit that deletes everything falls back gracefully', () => {
-    const ip = makeParser()
-    ip.parse('{a:1}')
-    const tree = ip.edit('', 0, 5)
-    expect(tree).toBeNull()
+    const doc = g.parse('Object', '{a:1}').edit('', 0, 5)
+    expect(doc.tree).toBeNull()
   })
 })

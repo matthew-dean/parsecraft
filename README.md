@@ -330,53 +330,47 @@ parse(css.rule('Stylesheet'), src, { trivia: many(choice(regex(/\s+/), comment))
 
 `CSTTrivia` nodes only appear in `rawChildren`, never in `children`. Zero-length trivia matches (e.g. `\s*` at a non-whitespace position) are not emitted.
 
-### IncrementalParser
+### Incremental re-parsing
 
-Extend `IncrementalParser` instead of `Parser` when you need incremental re-parsing. Pass the root rule name to `super()` and everything else stays the same.
+`Parser.parse(ruleName, input)` returns a `ParseDoc` — an object holding the tree, any parse errors, and an `edit()` method for incremental re-parsing. The parser itself stays stateless; all the incremental state lives in the doc.
 
 ```ts
-import { IncrementalParser, regex, literal, sequence, choice, many } from 'parseman'
-import type { Refs } from 'parseman'
+const css = new CSSParser()
 
-class ExprParser extends IncrementalParser {
-  constructor() { super('Expr') }
+const doc = css.parse('Stylesheet', src)
+doc.tree    // CSTNode root, or null on failure
+doc.errors  // ParseFail[], empty on success
+doc.input   // the source string
 
-  ws     = regex(/\s*/)
-  digits = regex(/[0-9]+/)
-  Num    = (g: Refs<ExprParser>) => g.digits
-  Add    = (g: Refs<ExprParser>) => sequence(g.Num, many(sequence(literal('+'), g.Num)))
-  Expr   = (g: Refs<ExprParser>) => choice(g.Add, g.Num)
-}
-
-const expr = new ExprParser()
-
-let tree = expr.parse('1+2+3')
-tree = expr.edit('1+20+3', 2, 3)   // only the Num node at offset 2 is re-parsed
-tree = expr.edit('1+20+30', 5, 6)  // only the Num node at offset 5 is re-parsed
-
-expr.currentTree   // the current tree
-expr.currentInput  // the input string that produced it
+// subsequent edits return a new doc — old one is untouched
+const doc2 = doc.edit(newSrc, changeStart, changeEnd)
 ```
 
-On first `parse()` a full parse runs. Subsequent `edit()` calls find the smallest node containing the edit, re-parse just that subtree using its saved context, and stop early when the new span end matches the expected position. O(changed region) amortized for typical edits.
+`edit()` finds the smallest node containing the change, re-parses just that subtree using its saved context, and stops early when the new span end matches the expected position. O(changed region) amortized for typical edits. Nodes unaffected by the edit are structurally shared between old and new docs.
 
 Context-sensitive grammars work correctly: each CST node records a `ctx.user` snapshot at parse time (`savedContext`), so re-parsing resumes from the exact same state. Solid enough for a language server.
 
-**In an IDE extension**, you hold one parser instance per open document. On the first open, call `parse(text)`. On each keystroke, your editor API gives you the changed range as byte offsets — pass those straight to `edit()`:
+**In an IDE extension**, hold one parser instance per language, one `ParseDoc` per open document. On each keystroke your editor gives you the changed range as byte offsets — pass those straight to `edit()`:
 
 ```ts
 // VS Code example
+const parser = new CSSParser()
+const docs = new Map<string, ParseDoc<CSTNode>>()
+
+vscode.workspace.onDidOpenTextDocument(document => {
+  docs.set(document.uri.toString(), parser.parse('Stylesheet', document.getText()))
+})
+
 vscode.workspace.onDidChangeTextDocument(event => {
+  const uri = event.document.uri.toString()
+  let doc = docs.get(uri)!
   for (const change of event.contentChanges) {
-    const start = change.rangeOffset
-    const end   = change.rangeOffset + change.rangeLength
-    tree = myParser.edit(event.document.getText(), start, end)
+    doc = doc.edit(event.document.getText(), change.rangeOffset, change.rangeOffset + change.rangeLength)
   }
-  // walk `tree` to emit diagnostics, folding ranges, semantic tokens, etc.
+  docs.set(uri, doc)
+  // walk doc.tree to emit diagnostics, folding ranges, semantic tokens, etc.
 })
 ```
-
-Only the CST nodes touched by the edit are rebuilt — the rest of the tree is structurally shared with the previous version, so diffing for diagnostics is cheap.
 
 ---
 

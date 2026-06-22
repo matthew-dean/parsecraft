@@ -1,6 +1,8 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta, Span } from '../types.ts'
 import { ref } from '../combinators/ref.ts'
 import type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTRawChild, NodeLike } from './types.ts'
+import { makeParseDoc } from './incremental.ts'
+import type { ParseDoc } from './incremental.ts'
 
 // ---------------------------------------------------------------------------
 // TypeScript helpers
@@ -168,6 +170,22 @@ export class Parser<N extends NodeLike = CSTNode> {
   /** Reconstruct a node with a new children array (used by IncrementalParser). */
   rebuild(node: N, newChildren: ReadonlyArray<N | CSTLeaf | CSTError>): N {
     return this.buildNode(node.type, node.span, newChildren, node.savedContext, [])
+  }
+
+  /**
+   * Parse input starting from a named rule, returning a ParseDoc.
+   * The doc carries the tree, any parse errors, and an edit() method
+   * for incremental re-parsing on subsequent changes.
+   *
+   *   const doc = css.parse('Stylesheet', src)
+   *   doc.tree    // the CST root, or null on failure
+   *   doc.errors  // ParseFail[], empty on success
+   *
+   *   // In an editor — just keep calling edit():
+   *   const doc2 = doc.edit(newSrc, changeStart, changeEnd)
+   */
+  parse(ruleName: RuleKeys<this>, input: string): ParseDoc<N> {
+    return makeParseDoc(this, ruleName as string, input)
   }
 
   /**

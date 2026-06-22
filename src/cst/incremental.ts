@@ -1,16 +1,34 @@
-import type { ParseContext } from '../types.ts'
-import { Parser } from './grammar.ts'
-import type { RuleKeys } from './grammar.ts'
+import type { ParseContext, ParseFail } from '../types.ts'
+import type { Parser, RuleKeys } from './grammar.ts'
 import type { CSTLeaf, CSTError, NodeLike } from './types.ts'
+
+// ---------------------------------------------------------------------------
+// ParseDoc
+// ---------------------------------------------------------------------------
+
+/**
+ * The result of Parser.parse() — holds the current tree and supports
+ * incremental re-parsing via edit().
+ *
+ *   const doc = css.parse('Stylesheet', src)
+ *   doc.tree    // CSTNode (or your N), null if parse failed
+ *   doc.errors  // ParseFail[], empty on success
+ *   doc.input   // the source string that produced this tree
+ *
+ *   const doc2 = doc.edit(newSrc, changeStart, changeEnd)
+ */
+export interface ParseDoc<N extends NodeLike = NodeLike> {
+  readonly tree: N | null
+  readonly errors: ParseFail[]
+  readonly input: string
+  edit(newInput: string, editStart: number, editEnd: number): ParseDoc<N>
+}
 
 // ---------------------------------------------------------------------------
 // Tree navigation helpers
 // ---------------------------------------------------------------------------
 
-type FoundNode = {
-  node: NodeLike
-  path: number[]
-}
+type FoundNode = { node: NodeLike; path: number[] }
 
 function isNode(x: unknown): x is NodeLike {
   return typeof x === 'object' && x !== null && (x as { _tag?: string })._tag === 'node'
@@ -59,63 +77,26 @@ function replaceAtPath<N extends NodeLike>(
 }
 
 // ---------------------------------------------------------------------------
-// IncrementalParser
+// ParseDoc implementation
 // ---------------------------------------------------------------------------
 
-/**
- * Extend this instead of Parser when you need incremental re-parsing.
- * Pass the root rule name to super() in your constructor.
- *
- *   class CssParser extends IncrementalParser {
- *     constructor() { super('Stylesheet') }
- *     ident      = regex(/[a-zA-Z-]+/)
- *     Selector   = (g: Refs<CssParser>) => sequence(g.ident, g.ident)
- *     Stylesheet = (g: Refs<CssParser>) => many(g.Selector)
- *   }
- *
- *   const css = new CssParser()
- *   let tree = css.parse('div p')
- *   tree = css.edit('div  p', 3, 4)   // re-parses only the Selector node
- *
- * On first parse() a full parse runs. Subsequent edit() calls find the
- * smallest node containing the edit, re-parse just that subtree using its
- * saved context, and stop early when the new span end matches the expected
- * position. O(changed region) amortized for typical edits.
- */
-export class IncrementalParser<N extends NodeLike = NodeLike> extends Parser<N> {
-  private readonly _rootRule: string
-  private _tree: N | null = null
-  private _input: string = ''
+class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
+  constructor(
+    private readonly _parser: Parser<N>,
+    private readonly _ruleName: string,
+    public readonly tree: N | null,
+    public readonly errors: ParseFail[],
+    public readonly input: string,
+  ) {}
 
-  constructor(rootRule: string) {
-    super()
-    this._rootRule = rootRule
-  }
+  edit(newInput: string, editStart: number, editEnd: number): ParseDoc<N> {
+    if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
 
-  parse(input: string): N | null {
-    this._input = input
-    const ctx: ParseContext = { trackLines: false }
-    const r = this.rule(this._rootRule as RuleKeys<this>).parse(input, 0, ctx)
-    this._tree = r.ok ? r.value : null
-    return this._tree
-  }
+    const delta = newInput.length - this.input.length
+    const found = findContaining(this.tree, editStart)
+    if (!found) return makeParseDoc(this._parser, this._ruleName, newInput)
 
-  /**
-   * Incremental re-parse after an edit.
-   *
-   * @param newInput  The complete new input string.
-   * @param editStart Character offset where the edit begins (inclusive).
-   * @param editEnd   Character offset where the old text ends (exclusive).
-   */
-  edit(newInput: string, editStart: number, editEnd: number): N | null {
-    if (!this._tree) return this.parse(newInput)
-
-    const delta = newInput.length - this._input.length
-
-    const found = findContaining(this._tree, editStart)
-    if (!found) return this.parse(newInput)
-
-    const ancestors = ancestorsAt(this._tree, found.path)
+    const ancestors = ancestorsAt(this.tree, found.path)
     const candidates: FoundNode[] = [found]
     const pathCopy = [...found.path]
     for (let i = ancestors.length - 2; i >= 0; i--) {
@@ -126,22 +107,33 @@ export class IncrementalParser<N extends NodeLike = NodeLike> extends Parser<N> 
     for (const candidate of candidates) {
       const { node, path } = candidate
       const expectedEnd = node.span.end + delta
-
-      const parser = this.rule(node.type as RuleKeys<this>)
+      const parser = this._parser.rule(node.type as RuleKeys<typeof this._parser>)
       const ctx: ParseContext = { trackLines: false, user: node.savedContext }
       const r = parser.parse(newInput, node.span.start, ctx)
       if (!r.ok) continue
-
       if (r.span.end === expectedEnd) {
-        this._tree = replaceAtPath(this, this._tree!, path, r.value)
-        this._input = newInput
-        return this._tree
+        const newTree = replaceAtPath(this._parser, this.tree!, path, r.value)
+        return new ParseDocImpl(this._parser, this._ruleName, newTree, [], newInput)
       }
     }
 
-    return this.parse(newInput)
+    return makeParseDoc(this._parser, this._ruleName, newInput)
   }
+}
 
-  get currentTree(): N | null { return this._tree }
-  get currentInput(): string { return this._input }
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+export function makeParseDoc<N extends NodeLike>(
+  parser: Parser<N>,
+  ruleName: string,
+  input: string,
+): ParseDoc<N> {
+  const ctx: ParseContext = { trackLines: false }
+  const r = parser.rule(ruleName as RuleKeys<typeof parser>).parse(input, 0, ctx)
+  if (r.ok) {
+    return new ParseDocImpl(parser, ruleName, r.value, [], input)
+  }
+  return new ParseDocImpl(parser, ruleName, null, [{ ok: false, expected: r.expected, span: r.span }], input)
 }

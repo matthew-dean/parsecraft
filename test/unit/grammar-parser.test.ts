@@ -12,7 +12,7 @@ import {
   literal, regex, sequence, choice, many, optional, sepBy,
   parse, scanTo, balanced, guard, withCtx,
 } from '../../src/index.ts'
-import { Parser, IncrementalParser } from '../../src/index.ts'
+import { Parser } from '../../src/index.ts'
 import type { Refs } from '../../src/index.ts'
 import type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTRawChild } from '../../src/index.ts'
 import type { Span } from '../../src/index.ts'
@@ -244,9 +244,7 @@ describe('Parser — custom AST via buildNode()', () => {
     text: string
   }
 
-  class MyGrammar extends IncrementalParser<MyNode> {
-    constructor() { super('Num') }
-
+  class MyGrammar extends Parser<MyNode> {
     protected override buildNode(
       type: string,
       span: Span,
@@ -270,15 +268,15 @@ describe('Parser — custom AST via buildNode()', () => {
     expect((r.value as MyNode).text).toBe('[Num:0-2]')
   })
 
-  it('IncrementalParser works with custom AST', () => {
-    const ip = new MyGrammar()
-    const tree = ip.parse('42')
-    expect(tree).not.toBeNull()
-    expect((tree as MyNode).text).toBe('[Num:0-2]')
+  it('parse() + edit() works with custom AST', () => {
+    const g = new MyGrammar()
+    const doc = g.parse('Num', '42')
+    expect(doc.tree).not.toBeNull()
+    expect((doc.tree as MyNode).text).toBe('[Num:0-2]')
 
-    const tree2 = ip.edit('999', 0, 2)
-    expect(tree2).not.toBeNull()
-    expect((tree2 as MyNode).text).toBe('[Num:0-3]')
+    const doc2 = doc.edit('999', 0, 2)
+    expect(doc2.tree).not.toBeNull()
+    expect((doc2.tree as MyNode).text).toBe('[Num:0-3]')
   })
 })
 
