@@ -362,6 +362,22 @@ On first `parse()` a full parse runs. Subsequent `edit()` calls find the smalles
 
 Context-sensitive grammars work correctly: each CST node records a `ctx.user` snapshot at parse time (`savedContext`), so re-parsing resumes from the exact same state. Solid enough for a language server.
 
+**In an IDE extension**, you hold one parser instance per open document. On the first open, call `parse(text)`. On each keystroke, your editor API gives you the changed range as byte offsets — pass those straight to `edit()`:
+
+```ts
+// VS Code example
+vscode.workspace.onDidChangeTextDocument(event => {
+  for (const change of event.contentChanges) {
+    const start = change.rangeOffset
+    const end   = change.rangeOffset + change.rangeLength
+    tree = myParser.edit(event.document.getText(), start, end)
+  }
+  // walk `tree` to emit diagnostics, folding ranges, semantic tokens, etc.
+})
+```
+
+Only the CST nodes touched by the edit are rebuilt — the rest of the tree is structurally shared with the previous version, so diffing for diagnostics is cheap.
+
 ---
 
 ## Context-sensitive parsing
