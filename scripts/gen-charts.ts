@@ -9,8 +9,8 @@ const BAR_H = 18
 const ROW_H = 28
 
 const COLORS: Record<string, string> = {
-  'Parmésan (compiled)': '#534AB7',
-  'Parmésan (interpreter)': '#8B7FE8',
+  'Parséman (compiled)': '#534AB7',
+  'Parséman (interpreter)': '#8B7FE8',
   'Peggy':               '#1D9E75',
   'Parsimmon':           '#E24B4A',
   'Chevrotain':          '#BA7517',
@@ -25,9 +25,9 @@ const JSON_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (52 bytes)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 2.00 },
+      { name: 'Parséman (compiled)', us: 2.00 },
       { name: 'Peggy',               us: 2.54 },
-      { name: 'Parmésan (interpreter)', us: 3.69 },
+      { name: 'Parséman (interpreter)', us: 3.69 },
       { name: 'Parsimmon',           us: 5.98 },
       { name: 'Chevrotain',          us: 7.24 },
     ],
@@ -35,9 +35,9 @@ const JSON_CHARTS: ChartData[] = [
   {
     subtitle: 'medium  (1.8 kB)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 57.87 },
+      { name: 'Parséman (compiled)', us: 57.87 },
       { name: 'Peggy',               us: 64.84 },
-      { name: 'Parmésan (interpreter)', us: 110.43 },
+      { name: 'Parséman (interpreter)', us: 110.43 },
       { name: 'Parsimmon',           us: 187.33 },
       { name: 'Chevrotain',          us: 227.33 },
     ],
@@ -46,8 +46,8 @@ const JSON_CHARTS: ChartData[] = [
     subtitle: 'large  (12 kB)',
     rows: [
       { name: 'Peggy',               us: 461.37 },
-      { name: 'Parmésan (compiled)', us: 513.34 },
-      { name: 'Parmésan (interpreter)', us: 995.65 },
+      { name: 'Parséman (compiled)', us: 513.34 },
+      { name: 'Parséman (interpreter)', us: 995.65 },
       { name: 'Parsimmon',           us: 1449.81 },
       { name: 'Chevrotain',          us: 1756.97 },
     ],
@@ -58,8 +58,8 @@ const CSV_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (54 bytes)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 0.92 },
-      { name: 'Parmésan (interpreter)', us: 1.97 },
+      { name: 'Parséman (compiled)', us: 0.92 },
+      { name: 'Parséman (interpreter)', us: 1.97 },
       { name: 'Peggy',               us: 2.06 },
       { name: 'Parsimmon',           us: 3.73 },
       { name: 'Chevrotain',          us: 5.60 },
@@ -68,8 +68,8 @@ const CSV_CHARTS: ChartData[] = [
   {
     subtitle: 'large  (14.8 kB)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 160.47 },
-      { name: 'Parmésan (interpreter)', us: 348.51 },
+      { name: 'Parséman (compiled)', us: 160.47 },
+      { name: 'Parséman (interpreter)', us: 348.51 },
       { name: 'Peggy',               us: 448.45 },
       { name: 'Parsimmon',           us: 460.38 },
       { name: 'Chevrotain',          us: 1069.16 },

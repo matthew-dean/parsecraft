@@ -77,8 +77,8 @@ console.log('\n=== JSON parsing ===')
 
 function jsonGroup(label: string, input: string, iters: number) {
   console.log(`\n  [${label}] ${input.length} bytes`)
-  bench('Parmésan (interpreter)',     () => parseJSON(input), iters)
-  bench('Parmésan (compiled)',   () => compiledJSON.parse(input, 0), iters)
+  bench('Parséman (interpreter)',     () => parseJSON(input), iters)
+  bench('Parséman (compiled)',   () => compiledJSON.parse(input, 0), iters)
   bench('Chevrotain',            () => chevrotainJSON(input), iters)
   bench('Parsimmon',             () => parsimmonJSON(input), iters)
   bench('Peggy',                 () => peggyJSON(input), iters)
@@ -97,8 +97,8 @@ console.log('\n=== CSV parsing ===')
 function csvGroup(label: string, input: string, iters: number) {
   const rows = input.split('\n').length - 1
   console.log(`\n  [${label}] ${input.length} bytes, ${rows} rows`)
-  bench('Parmésan (interpreter)',     () => parseCSV(input), iters)
-  bench('Parmésan (compiled)',   () => compiledCSV.parse(input), iters)
+  bench('Parséman (interpreter)',     () => parseCSV(input), iters)
+  bench('Parséman (compiled)',   () => compiledCSV.parse(input), iters)
   bench('Chevrotain',            () => chevrotainCSV(input), iters)
   bench('Parsimmon',             () => parsimmonCSV(input), iters)
   bench('Peggy',                 () => peggyCSV(input), iters)

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/parseman.png" alt="Parmésan — 100% Pure Parsing" width="220" />
+  <img src="https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/parseman.png" alt="Parséman — 100% Pure Parsing" width="220" />
 </p>
 
-# Parmésan (PAR-zə-mahn)
+# Parséman (PAR-zə-mahn)
 
 Write parsers with combinators, then let the bundler plugin compile them to optimized inline functions at build time — `charCodeAt` dispatch, `while` loops, zero allocation on failure paths. Your parsers are just TypeScript — the plugin optimizes them at build time, invisibly. Easy to write, easy to debug.
 
@@ -16,7 +16,7 @@ Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
 
 ![CSV parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-csv.svg)
 
-Parmésan compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parmésan compiled wins going away.
+Parséman compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parséman compiled wins going away.
 
 ---
 
@@ -502,7 +502,7 @@ pnpm install
 pnpm test       # Vitest — interpreter + compiler parity + ordered-choice semantics
 pnpm typecheck  # TypeScript 7
 pnpm build      # ESM + CJS + .d.ts → dist/
-pnpm bench      # Parmésan vs Peggy vs Parsimmon vs Chevrotain
+pnpm bench      # Parséman vs Peggy vs Parsimmon vs Chevrotain
 ```
 
 ## License
