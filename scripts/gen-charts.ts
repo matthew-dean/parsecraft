@@ -58,19 +58,21 @@ const CSV_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (54 bytes)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 0.87 },
-      { name: 'Parmésan (interpreter)', us: 1.93 },
-      { name: 'Peggy',               us: 1.96 },
-      { name: 'Parsimmon',           us: 3.47 },
+      { name: 'Parmésan (compiled)', us: 0.92 },
+      { name: 'Parmésan (interpreter)', us: 1.97 },
+      { name: 'Peggy',               us: 2.06 },
+      { name: 'Parsimmon',           us: 3.73 },
+      { name: 'Chevrotain',          us: 5.60 },
     ],
   },
   {
     subtitle: 'large  (14.8 kB)',
     rows: [
-      { name: 'Parmésan (compiled)', us: 153.22 },
-      { name: 'Parmésan (interpreter)', us: 336.45 },
-      { name: 'Peggy',               us: 425.53 },
-      { name: 'Parsimmon',           us: 435.36 },
+      { name: 'Parmésan (compiled)', us: 160.47 },
+      { name: 'Parmésan (interpreter)', us: 348.51 },
+      { name: 'Peggy',               us: 448.45 },
+      { name: 'Parsimmon',           us: 460.38 },
+      { name: 'Chevrotain',          us: 1069.16 },
     ],
   },
 ]
@@ -167,7 +169,7 @@ writeFileSync(
 )
 writeFileSync(
   'assets/bench-csv.svg',
-  buildSVG('CSV parsing', CSV_CHARTS, ALL_LEGEND.filter(([n]) => n !== 'Chevrotain')),
+  buildSVG('CSV parsing', CSV_CHARTS, ALL_LEGEND),
 )
 
 console.log('Generated assets/bench-json.svg and assets/bench-csv.svg')
