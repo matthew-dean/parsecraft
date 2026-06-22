@@ -29,42 +29,42 @@ interface Row {
 }
 interface ChartData { subtitle: string; rows: Row[] }
 
-// Measured compile() cost: ~46µs JSON, ~44µs CSV
-const JSON_COMPILE_US = 44
+// Measured compile() cost: ~43µs JSON, ~44µs CSV
+const JSON_COMPILE_US = 43
 const CSV_COMPILE_US  = 44
 
 const JSON_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (52 bytes)',
     rows: [
-      { name: 'Parséman (macro build)',    us: 2.03 },
-      { name: 'Peggy',                     us: 2.62 },
-      { name: 'Parséman (no compile)',     us: 3.75 },
-      { name: 'Parsimmon',                us: 6.04 },
-      { name: 'Chevrotain',               us: 7.38 },
-      { name: 'Parséman (w/ .compile())', us: 46.10, parseUs: 2.03 },
+      { name: 'Parséman (macro build)',    us: 1.93 },
+      { name: 'Peggy',                     us: 2.63 },
+      { name: 'Parséman (no compile)',     us: 4.00 },
+      { name: 'Parsimmon',                us: 6.25 },
+      { name: 'Chevrotain',               us: 7.48 },
+      { name: 'Parséman (w/ .compile())', us: 46.32, parseUs: 1.93 },
     ],
   },
   {
     subtitle: 'medium  (1.8 kB)',
     rows: [
-      { name: 'Parséman (macro build)',    us: 57.88 },
-      { name: 'Peggy',                     us: 66.64 },
-      { name: 'Parséman (w/ .compile())', us: 101.31, parseUs: 57.88 },
-      { name: 'Parséman (no compile)',     us: 112.76 },
-      { name: 'Parsimmon',                us: 193.09 },
-      { name: 'Chevrotain',               us: 232.88 },
+      { name: 'Parséman (macro build)',    us: 54.40 },
+      { name: 'Peggy',                     us: 69.17 },
+      { name: 'Parséman (w/ .compile())', us: 99.50, parseUs: 54.40 },
+      { name: 'Parséman (no compile)',     us: 117.33 },
+      { name: 'Parsimmon',                us: 197.25 },
+      { name: 'Chevrotain',               us: 238.65 },
     ],
   },
   {
     subtitle: 'large  (12 kB)',
     rows: [
-      { name: 'Peggy',                     us: 472.06 },
-      { name: 'Parséman (macro build)',    us: 525.08 },
-      { name: 'Parséman (w/ .compile())', us: 568.00, parseUs: 525.08 },
-      { name: 'Parséman (no compile)',     us: 1016.27 },
-      { name: 'Parsimmon',                us: 1489.59 },
-      { name: 'Chevrotain',               us: 1800.58 },
+      { name: 'Parséman (macro build)',    us: 487.00 },
+      { name: 'Peggy',                     us: 481.00 },
+      { name: 'Parséman (w/ .compile())', us: 535.00, parseUs: 487.00 },
+      { name: 'Parséman (no compile)',     us: 1030.00 },
+      { name: 'Parsimmon',                us: 1530.00 },
+      { name: 'Chevrotain',               us: 1840.00 },
     ],
   },
 ]
@@ -73,23 +73,23 @@ const CSV_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (54 bytes)',
     rows: [
-      { name: 'Parséman (macro build)',    us: 0.92 },
-      { name: 'Parséman (no compile)',     us: 1.93 },
-      { name: 'Peggy',                     us: 2.08 },
-      { name: 'Parsimmon',                us: 3.65 },
-      { name: 'Chevrotain',               us: 5.47 },
-      { name: 'Parséman (w/ .compile())', us: 43.56, parseUs: 0.92 },
+      { name: 'Parséman (macro build)',    us: 0.58 },
+      { name: 'Parséman (no compile)',     us: 1.96 },
+      { name: 'Peggy',                     us: 2.05 },
+      { name: 'Parsimmon',                us: 3.59 },
+      { name: 'Chevrotain',               us: 5.43 },
+      { name: 'Parséman (w/ .compile())', us: 44.50, parseUs: 0.58 },
     ],
   },
   {
     subtitle: 'large  (14.8 kB)',
     rows: [
-      { name: 'Parséman (macro build)',    us: 160.03 },
-      { name: 'Parséman (w/ .compile())', us: 197.92, parseUs: 160.03 },
-      { name: 'Parséman (no compile)',     us: 340.71 },
-      { name: 'Peggy',                     us: 438.34 },
-      { name: 'Parsimmon',                us: 447.79 },
-      { name: 'Chevrotain',               us: 1054.02 },
+      { name: 'Parséman (macro build)',    us: 94.80 },
+      { name: 'Parséman (w/ .compile())', us: 139.13, parseUs: 94.80 },
+      { name: 'Parséman (no compile)',     us: 336.25 },
+      { name: 'Parsimmon',                us: 449.39 },
+      { name: 'Peggy',                     us: 436.51 },
+      { name: 'Chevrotain',               us: 1050.87 },
     ],
   },
 ]

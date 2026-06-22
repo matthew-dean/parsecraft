@@ -20,14 +20,16 @@
 import { createUnplugin } from 'unplugin'
 import { parseSync } from 'oxc-parser'
 import MagicString from 'magic-string'
-import { evaluateExpr, referencesAny, type Scope } from './evaluator.ts'
+import { evaluateExpr, evaluateParserFactory, referencesAny, type Scope, type ScopeEntry } from './evaluator.ts'
 import { compile } from '../compiler/codegen.ts'
 import type { Combinator } from '../types.ts'
 import type {
   ImportDeclaration,
   VariableDeclarator,
+  VariableDeclaration,
   Expression,
   Statement,
+  ExportNamedDeclaration,
 } from '@oxc-project/types'
 
 export type ParsecraftPluginOptions = {
@@ -105,37 +107,110 @@ export function transformMacro(
   if (macroImports.length === 0) return null
 
   // --- Pass 2: evaluate declarations in source order ---
-  const scope: Scope = new Map<string, Combinator<unknown>>()
+  // Scope stores enriched ScopeEntry objects so evaluateParserFactory can
+  // replay mfSrcs when outer-scope combinators are referenced inside factories.
+  const scope: Scope = new Map<string, ScopeEntry>()
   const replacements: Array<{ start: number; end: number; replacement: string }> = []
   let anyUnresolved = false
 
   for (const stmt of body as Statement[]) {
-    if (stmt.type !== 'VariableDeclaration') continue
+    // Handle both direct VariableDeclarations and exported ones
+    let vd: VariableDeclaration | null = null
+    let stmtStart = stmt.start
+    let stmtEnd = stmt.end
+    let exportPrefix = ''
 
-    for (const decl of stmt.declarations) {
+    if (stmt.type === 'VariableDeclaration') {
+      vd = stmt as unknown as VariableDeclaration
+    } else if (stmt.type === 'ExportNamedDeclaration') {
+      const expStmt = stmt as unknown as ExportNamedDeclaration
+      if (expStmt.declaration?.type === 'VariableDeclaration') {
+        vd = expStmt.declaration as unknown as VariableDeclaration
+        exportPrefix = 'export '
+      }
+    }
+
+    if (!vd) continue
+
+    for (const decl of vd.declarations) {
       const d = decl as VariableDeclarator
       if (!d.init) continue
-      if (d.id.type !== 'Identifier') continue
-
-      const varName = d.id.name
       const init = d.init as Expression
+      const kind = (vd as unknown as { kind: string }).kind ?? 'const'
 
-      if (!referencesAny(init, allNames, scope)) continue
+      if ((d.id as unknown as { type: string }).type === 'Identifier') {
+        // ── Simple binding: const name = <expr> ──────────────────────────
+        const varName = (d.id as unknown as { name: string }).name
+        if (!referencesAny(init, allNames, scope)) continue
 
-      const mapFnSources: string[] = []
-      const parser = evaluateExpr(init, scope, code, mapFnSources)
-      if (parser === null) { anyUnresolved = true; continue }
+        const mapFnSources: string[] = []
+        const parser = evaluateExpr(init, scope, code, mapFnSources)
+        if (parser === null) { anyUnresolved = true; continue }
 
-      const compiled = compile(parser, mapFnSources.length ? mapFnSources : undefined)
-      if (compiled.inlineExpression === null) { anyUnresolved = true; continue }
+        const compiled = compile(parser, mapFnSources.length ? mapFnSources : undefined)
+        if (compiled.inlineExpression === null) { anyUnresolved = true; continue }
 
-      replacements.push({
-        start: init.start,
-        end: init.end,
-        replacement: compiled.inlineExpression,
-      })
+        replacements.push({
+          start: init.start,
+          end: init.end,
+          replacement: compiled.inlineExpression,
+        })
 
-      scope.set(varName, parser)
+        // Store enriched scope entry so factories can replay mfSrcs
+        scope.set(varName, { combi: parser, mfSrcs: mapFnSources })
+
+      } else if ((d.id as unknown as { type: string }).type === 'ObjectPattern') {
+        // ── Destructured binding: const { a, b } = parser(g => { ... }) ──
+        // Only handle parser() factory calls
+        if (init.type !== 'CallExpression') continue
+        const calleeType = (init as unknown as { callee: { type: string; name?: string } }).callee
+        if (calleeType.type !== 'Identifier' || calleeType.name !== 'parser') continue
+        if (!referencesAny(init, allNames, scope)) continue
+
+        const args = (init as unknown as { arguments: unknown[] }).arguments
+        const factoryArg = args[0] as Expression | undefined
+        if (!factoryArg) { anyUnresolved = true; continue }
+
+        const mapFnSources: string[] = []
+        const ruleMap = evaluateParserFactory(factoryArg, scope, code, mapFnSources)
+        if (!ruleMap) { anyUnresolved = true; continue }
+
+        // Walk the ObjectPattern properties and compile each rule
+        const pattern = d.id as unknown as { properties: unknown[] }
+        const lines: string[] = []
+        let allOk = true
+        let mfOffset = 0  // mapFnSources is shared; each rule uses a sub-slice
+
+        for (const prop of pattern.properties) {
+          const p = prop as { type: string; key: { type: string; name?: string; value?: unknown }; value: { type: string; name?: string } }
+          if (p.type === 'RestElement' || p.type === 'BindingRestElement') { allOk = false; break }
+
+          const ruleKey = p.key.type === 'Identifier' ? p.key.name!
+            : p.key.type === 'StringLiteral' ? String(p.key.value)
+            : null
+          const localName = (p.value.type === 'Identifier' || p.value.type === 'BindingIdentifier') ? p.value.name!
+            : ruleKey
+          if (!ruleKey || !localName) { allOk = false; break }
+
+          const rule = ruleMap.get(ruleKey)
+          if (!rule) { allOk = false; break }
+
+          const compiled = compile(rule, mapFnSources.length ? mapFnSources : undefined)
+          if (compiled.inlineExpression === null) { allOk = false; break }
+
+          lines.push(`${exportPrefix}${kind} ${localName} = ${compiled.inlineExpression}`)
+          // Store in scope so subsequent declarations can reference compiled rules
+          scope.set(localName, { combi: rule, mfSrcs: mapFnSources })
+        }
+
+        if (!allOk) { anyUnresolved = true; continue }
+
+        replacements.push({
+          start: stmtStart,
+          end: stmtEnd,
+          replacement: lines.join('\n'),
+        })
+      }
     }
   }
 

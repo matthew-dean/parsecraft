@@ -6,6 +6,8 @@
 
 Write parsers in TypeScript — fast enough to run as-is, and blazing fast when the bundler macro kicks in. Same code either way; no grammar files, no generated output to check in. Drop the plugin in tests or anywhere a bundler isn't around and everything still works.
 
+_Note: Not necessarily production-ready! I still have test cases and sample parsers I want to build to more rigorously test the API and performance._
+
 ## Benchmarks
 
 Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
@@ -235,7 +237,7 @@ const { value } = parser<{ value: Combinator<JSON> }>(g => {
 
 `g.value` is a parser reference that works anywhere inside the factory regardless of order. Local helpers (`comma`, `pair`, `object`) that don't need to be cross-referenced can be plain `const`. Only put a rule in the returned object if other rules need to reach it as `g.xxx`.
 
-> **Macro note:** Recursive parsers can't be inlined as a single expression, so the plugin leaves them as-is — but you can still call `compile()` at runtime for the same speedups. The codegen emits mutually recursive named functions and handles cycles just fine. Non-recursive leaf parsers in the same file still get inlined.
+> **Macro and recursive grammars:** The plugin fully compiles `parser()` factories, including recursive ones. It emits mutually recursive named functions (`_pf0` etc.) so the cycle is broken. Add `with { type: 'macro' }` to your import and the entire grammar — recursive rules included — is inlined at build time.
 
 ### `ref<T>()` — low-level forward declaration
 

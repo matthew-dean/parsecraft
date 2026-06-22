@@ -17,51 +17,51 @@
 <text x="20" y="111" font-size="12.5" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">small  (54 bytes)</text>
 <text x="230" y="138" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (macro build)</text>
 <rect x="238" y="125" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="125" width="8.2" height="18" rx="3" fill="#534AB7"/>
-<text x="253.1524334251607" y="138" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">0.92 µs</text>
+<rect x="238" y="125" width="5.0" height="18" rx="3" fill="#534AB7"/>
+<text x="250.03101123595505" y="138" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">0.58 µs</text>
 <text x="230" y="166" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (no compile)</text>
 <rect x="238" y="153" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="153" width="17.1" height="18" rx="3" fill="#C4BAFF"/>
-<text x="262.1023875114784" y="166" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">1.93 µs</text>
+<rect x="238" y="153" width="17.0" height="18" rx="3" fill="#C4BAFF"/>
+<text x="262.00134831460673" y="166" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">1.96 µs</text>
 <text x="230" y="194" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Peggy</text>
 <rect x="238" y="181" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="181" width="18.4" height="18" rx="3" fill="#1D9E75"/>
-<text x="263.4315886134068" y="194" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">2.08 µs</text>
+<rect x="238" y="181" width="17.8" height="18" rx="3" fill="#1D9E75"/>
+<text x="262.7820224719101" y="194" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">2.05 µs</text>
 <text x="230" y="222" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parsimmon</text>
 <rect x="238" y="209" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="209" width="32.3" height="18" rx="3" fill="#E24B4A"/>
-<text x="277.3438934802571" y="222" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">3.65 µs</text>
+<rect x="238" y="209" width="31.1" height="18" rx="3" fill="#E24B4A"/>
+<text x="276.1402247191011" y="222" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">3.59 µs</text>
 <text x="230" y="250" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Chevrotain</text>
 <rect x="238" y="237" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="237" width="48.5" height="18" rx="3" fill="#BA7517"/>
-<text x="293.4715335169881" y="250" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">5.47 µs</text>
+<rect x="238" y="237" width="47.1" height="18" rx="3" fill="#BA7517"/>
+<text x="292.1006741573034" y="250" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">5.43 µs</text>
 <text x="230" y="278" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (w/ .compile())</text>
 <rect x="238" y="265" width="386" height="18" rx="3" fill="#eaeef2"/>
 <rect x="238" y="265" width="386.0" height="18" rx="3" fill="#D0C8FF"/>
-<rect x="238" y="265" width="8.2" height="18" rx="3" fill="#9B8FEF"/>
-<text x="631" y="278" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">43.6 µs</text>
+<rect x="238" y="265" width="5.0" height="18" rx="3" fill="#9B8FEF"/>
+<text x="631" y="278" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">44.5 µs</text>
 <text x="20" y="319" font-size="12.5" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">large  (14.8 kB)</text>
 <text x="230" y="346" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (macro build)</text>
 <rect x="238" y="333" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="333" width="58.6" height="18" rx="3" fill="#534AB7"/>
-<text x="303.6057000815924" y="346" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">160 µs</text>
+<rect x="238" y="333" width="34.8" height="18" rx="3" fill="#534AB7"/>
+<text x="279.8214336692455" y="346" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">94.8 µs</text>
 <text x="230" y="374" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (w/ .compile())</text>
 <rect x="238" y="361" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="361" width="72.5" height="18" rx="3" fill="#D0C8FF"/>
-<rect x="238" y="361" width="58.6" height="18" rx="3" fill="#9B8FEF"/>
-<text x="317.4816606895505" y="374" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">198 µs</text>
+<rect x="238" y="361" width="51.1" height="18" rx="3" fill="#D0C8FF"/>
+<rect x="238" y="361" width="34.8" height="18" rx="3" fill="#9B8FEF"/>
+<text x="296.1044943713304" y="374" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">139 µs</text>
 <text x="230" y="402" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (no compile)</text>
 <rect x="238" y="389" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="389" width="124.8" height="18" rx="3" fill="#C4BAFF"/>
-<text x="369.7737803836739" y="402" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">341 µs</text>
-<text x="230" y="430" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Peggy</text>
+<rect x="238" y="389" width="123.5" height="18" rx="3" fill="#C4BAFF"/>
+<text x="368.5095682624873" y="402" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">336 µs</text>
+<text x="230" y="430" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parsimmon</text>
 <rect x="238" y="417" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="417" width="160.5" height="18" rx="3" fill="#1D9E75"/>
-<text x="405.5275421718753" y="430" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">438 µs</text>
-<text x="230" y="458" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parsimmon</text>
+<rect x="238" y="417" width="165.1" height="18" rx="3" fill="#E24B4A"/>
+<text x="410.0675535508674" y="430" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">449 µs</text>
+<text x="230" y="458" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Peggy</text>
 <rect x="238" y="445" width="386" height="18" rx="3" fill="#eaeef2"/>
-<rect x="238" y="445" width="164.0" height="18" rx="3" fill="#E24B4A"/>
-<text x="408.98829244226863" y="458" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">448 µs</text>
+<rect x="238" y="445" width="160.3" height="18" rx="3" fill="#1D9E75"/>
+<text x="405.33654020002473" y="458" font-size="11" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">437 µs</text>
 <text x="230" y="486" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Chevrotain</text>
 <rect x="238" y="473" width="386" height="18" rx="3" fill="#eaeef2"/>
 <rect x="238" y="473" width="386.0" height="18" rx="3" fill="#BA7517"/>

@@ -2,8 +2,9 @@
  * Compile a Combinator<T> definition tree into an optimized JavaScript function.
  *
  * Design: every sub-emitter uses early-return on failure. Fallible contexts
- * (many loops, non-disjoint choice arms) wrap inner code in IIFEs so
- * early-return keeps working uniformly throughout.
+ * (optional, sepBy loops, many loops) use labeled blocks so early-exit is a
+ * `break <label>` rather than an IIFE return — no function call, no result
+ * object allocation per node.
  */
 import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ChoiceStrategy } from '../types.ts'
 import { getCoreLiteralValue, getCoreRegexDef } from '../combinators/choice.ts'
@@ -16,6 +17,8 @@ type Ctx = {
   indent: number
   /** Regex declarations hoisted to module scope */
   regexDecls: string[]
+  /** Dedup map: "source/flags" → variable name (_re0 etc.) */
+  regexMap: Map<string, string>
   /** Map functions that need to be captured at compile time */
   mapFns: Array<(v: unknown, span: { start: number; end: number }) => unknown>
   /** Runtime parser fallbacks (for unknown/_def-less parsers) */
@@ -28,6 +31,11 @@ type Ctx = {
   namedFnDecls: string[]
   /** Active trivia parser (set by grammar() wrappers, cleared on exit) */
   activeTrivia?: Combinator<unknown>
+  /**
+   * When set, `failStmt` emits `break <label>` instead of `return { ok: false }`.
+   * Used by emitFallible to let labeled blocks act as the failure boundary.
+   */
+  failLabel?: string
 }
 
 function v(ctx: Ctx, prefix = '_v'): string { return `${prefix}${ctx.vars++}` }
@@ -45,7 +53,14 @@ type ER = { stmts: string[]; valueVar: string; endVar: string }
 // Helpers
 // ---------------------------------------------------------------------------
 function failStmt(ctx: Ctx, expected: string, posExpr: string): string {
+  if (ctx.failLabel) return `${ind(ctx)}break ${ctx.failLabel}`
   return `${ind(ctx)}return { ok: false, expected: [${expected}], span: { start: ${posExpr}, end: ${posExpr} } }`
+}
+
+/** Like failStmt but `expectedArr` is already a full JS array expression e.g. `["a","b"]`. */
+function failArr(ctx: Ctx, expectedArr: string, posExpr: string): string {
+  if (ctx.failLabel) return `${ind(ctx)}break ${ctx.failLabel}`
+  return `${ind(ctx)}return { ok: false, expected: ${expectedArr}, span: { start: ${posExpr}, end: ${posExpr} } }`
 }
 
 function firstSetCond(codeVar: string, fs: FirstSet): string {
@@ -67,6 +82,45 @@ function asIIFE(stmts: string[], valueVar: string, endVar: string, startPos: str
     `${indent}})()`,
   ].join('\n')
 }
+
+/**
+ * Emit `inner` as a labeled block with flat result variables — no IIFE call,
+ * no `{ ok, value, span }` object allocation.  The returned stmts declare:
+ *   let ${okVar} = false, ${valVar}, ${endVar} = ${pos}
+ *   ${label}: { <inner stmts using break ${label} on failure>; capture success }
+ * Callers read ${okVar} to branch on success/failure.
+ */
+function emitFallible(
+  inner: Combinator<unknown>,
+  ctx: Ctx,
+  pos: string,
+): { stmts: string[]; okVar: string; valVar: string; endVar: string } {
+  const lbl  = v(ctx, '_lbl')
+  const okV  = `${lbl}ok`
+  const valV = `${lbl}v`
+  const endV = `${lbl}e`
+
+  const savedLabel  = ctx.failLabel
+  const savedIndent = ctx.indent
+  ctx.failLabel = lbl
+  ctx.indent    = 0
+  const r = emit(inner, ctx, pos)
+  ctx.failLabel = savedLabel
+  ctx.indent    = savedIndent
+
+  const ind0 = ind(ctx)
+  const stmts = [
+    `${ind0}let ${okV} = false, ${valV}, ${endV} = ${pos}`,
+    `${ind0}${lbl}: {`,
+    ...r.stmts,
+    `${ind0}  ${valV} = ${r.valueVar}`,
+    `${ind0}  ${endV} = ${r.endVar}`,
+    `${ind0}  ${okV} = true`,
+    `${ind0}}`,
+  ]
+  return { stmts, okVar: okV, valVar: valV, endVar: endV }
+}
+
 
 // ---------------------------------------------------------------------------
 // Per-combinator emitters
@@ -117,8 +171,13 @@ function emitLit(def: Extract<ParserDef, { tag: 'literal' }>, ctx: Ctx, pos: str
 
 function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: string): ER {
   const flags = 'y' + def.flags.replace(/[gy]/g, '')
-  const rName = `_re${ctx.regexDecls.length}`
-  ctx.regexDecls.push(`const ${rName} = /${def.optimizedSource}/${flags}`)
+  const key = `${def.optimizedSource}/${flags}`
+  let rName = ctx.regexMap.get(key)
+  if (rName === undefined) {
+    rName = `_re${ctx.regexDecls.length}`
+    ctx.regexDecls.push(`const ${rName} = /${def.optimizedSource}/${flags}`)
+    ctx.regexMap.set(key, rName)
+  }
 
   const mv = v(ctx, '_m')
   const vv = v(ctx)
@@ -142,10 +201,13 @@ function ensureTriviaFn(ctx: Ctx): string {
   if (!ctx.namedParsers.has(trivia)) {
     const fnName = `_pf${ctx.namedParsers.size}`
     ctx.namedParsers.set(trivia, fnName)   // register FIRST to break any cycles
-    const savedIndent = ctx.indent
-    ctx.indent = 1
+    const savedIndent    = ctx.indent
+    const savedFailLabel = ctx.failLabel
+    ctx.indent    = 1
+    ctx.failLabel = undefined
     const r = emit(trivia, ctx, '_pos')
-    ctx.indent = savedIndent
+    ctx.indent    = savedIndent
+    ctx.failLabel = savedFailLabel
     ctx.namedFnDecls.push([
       `function ${fnName}(input, _pos, _ctx) {`,
       ...r.stmts,
@@ -218,9 +280,7 @@ function emitChoice(def: Extract<ParserDef, { tag: 'choice' }>, ctx: Ctx, pos: s
       ctx.indent--
       stmts.push(`${ind(ctx)}}`)
     }
-    stmts.push(
-      `${ind(ctx)}else return { ok: false, expected: ${allExpected}, span: { start: ${pos}, end: ${pos} } }`,
-    )
+    stmts.push(`${ind(ctx)}else ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`)
     return { stmts, valueVar: valV, endVar: endV }
   }
 
@@ -239,11 +299,15 @@ function emitGreedyClassify(
   const superParser = def.parsers[superIndex]!
   const regexDef = getCoreRegexDef(superParser)!
 
-  // Hoist the regex (same mechanism as emitRegex)
-  const reIdx = ctx.regexDecls.length
-  const reVar = `_re${reIdx}`
+  // Hoist the regex (same mechanism as emitRegex, with dedup)
   const cleanFlags = 'y' + regexDef.flags.replace(/[gy]/g, '')
-  ctx.regexDecls.push(`const ${reVar} = /${regexDef.source}/${cleanFlags}`)
+  const reKey = `${regexDef.source}/${cleanFlags}`
+  let reVar = ctx.regexMap.get(reKey)
+  if (reVar === undefined) {
+    reVar = `_re${ctx.regexDecls.length}`
+    ctx.regexDecls.push(`const ${reVar} = /${regexDef.source}/${cleanFlags}`)
+    ctx.regexMap.set(reKey, reVar)
+  }
 
   const matchV = v(ctx, '_gm')
   const wordV  = v(ctx, '_gw')
@@ -252,7 +316,7 @@ function emitGreedyClassify(
   const stmts: string[] = [
     `${ind(ctx)}${reVar}.lastIndex = ${pos}`,
     `${ind(ctx)}const ${matchV} = ${reVar}.exec(input)`,
-    `${ind(ctx)}if (${matchV} === null) return { ok: false, expected: ${allExpected}, span: { start: ${pos}, end: ${pos} } }`,
+    `${ind(ctx)}if (${matchV} === null) ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`,
     `${ind(ctx)}const ${wordV} = ${matchV}[0]`,
     `${ind(ctx)}const ${endV} = ${pos} + ${wordV}.length`,
   ]
@@ -309,7 +373,7 @@ function emitLiteralsLongestFirst(
     ctx.indent--
     stmts.push(`${ind(ctx)}}`)
   }
-  stmts.push(`${ind(ctx)}else return { ok: false, expected: ${allExpected}, span: { start: ${pos}, end: ${pos} } }`)
+  stmts.push(`${ind(ctx)}else ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`)
 
   return { stmts, valueVar: valV, endVar: endV }
 }
@@ -329,10 +393,13 @@ function emitFirstMatch(
     const gate    = def.gates[i]
     const autoNot = def.autoNot[i]
 
-    const savedIndent = ctx.indent
-    ctx.indent = 0
+    const savedIndent   = ctx.indent
+    const savedFailLabel = ctx.failLabel
+    ctx.indent    = 0
+    ctx.failLabel = undefined  // branches go into IIFEs; break can't cross IIFE boundary
     const r = emit(p, ctx, pos)
-    ctx.indent = savedIndent
+    ctx.indent    = savedIndent
+    ctx.failLabel = savedFailLabel
     const iife = asIIFE(r.stmts, r.valueVar, r.endVar, pos, ind(ctx))
 
     // Gate: register predicate in mapFns; condition guards entire arm attempt
@@ -359,9 +426,7 @@ function emitFirstMatch(
       stmts.push(`${ind(ctx)}if (${skipCond}) { try { ${resV} = ${iife} } catch {} }`)
     }
   }
-  stmts.push(
-    `${ind(ctx)}if (!${resV}?.ok) return { ok: false, expected: ${allExpected}, span: { start: ${pos}, end: ${pos} } }`,
-  )
+  stmts.push(`${ind(ctx)}if (!${resV}?.ok) ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`)
   return { stmts, valueVar: `${resV}.value`, endVar: `${resV}.span.end` }
 }
 
@@ -420,14 +485,6 @@ function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: C
     `${ind(ctx)}let ${curV} = ${pos}`,
   ]
 
-  const emitInnerIIFE = (): string => {
-    const savedIndent = ctx.indent
-    ctx.indent = 0
-    const r = emit(def.parser, ctx, curV)
-    ctx.indent = savedIndent
-    return asIIFE(r.stmts, r.valueVar, r.endVar, curV, ind(ctx) + '  ')
-  }
-
   if (def.min === 1) {
     // Inline first mandatory match with early-return on failure
     const firstR = emit(def.parser, ctx, curV)
@@ -440,11 +497,12 @@ function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: C
 
   stmts.push(`${ind(ctx)}while (${curV} < input.length) {`)
   ctx.indent++
+  const { stmts: iterStmts, okVar: iterOk, valVar: iterVal, endVar: iterEnd } = emitFallible(def.parser, ctx, curV)
   stmts.push(
-    `${ind(ctx)}const _iter = (() => { try { return ${emitInnerIIFE()} } catch { return null } })()`,
-    `${ind(ctx)}if (!_iter?.ok || _iter.span.end === ${curV}) break`,
-    `${ind(ctx)}${arrV}.push(_iter.value)`,
-    `${ind(ctx)}${curV} = _iter.span.end`,
+    ...iterStmts,
+    `${ind(ctx)}if (!${iterOk} || ${iterEnd} === ${curV}) break`,
+    `${ind(ctx)}${arrV}.push(${iterVal})`,
+    `${ind(ctx)}${curV} = ${iterEnd}`,
   )
   ctx.indent--
   stmts.push(`${ind(ctx)}}`)
@@ -456,17 +514,13 @@ function emitOptional(def: Extract<ParserDef, { tag: 'optional' }>, ctx: Ctx, po
   const valV = v(ctx, '_opt')
   const endV = v(ctx, '_opte')
 
-  const savedIndent = ctx.indent
-  ctx.indent = 0
-  const r = emit(def.parser, ctx, pos)
-  ctx.indent = savedIndent
+  const { stmts: lblStmts, okVar, valVar, endVar } = emitFallible(def.parser, ctx, pos)
 
-  const iife = asIIFE(r.stmts, r.valueVar, r.endVar, pos, ind(ctx))
-  const resV = v(ctx, '_optr')
+  const ind0 = ind(ctx)
   const stmts = [
-    `${ind(ctx)}const ${resV} = (() => { try { return ${iife} } catch { return null } })()`,
-    `${ind(ctx)}const ${valV} = ${resV}?.ok ? ${resV}.value : null`,
-    `${ind(ctx)}const ${endV} = ${resV}?.ok ? ${resV}.span.end : ${pos}`,
+    ...lblStmts,
+    `${ind0}const ${valV} = ${okVar} ? ${valVar} : null`,
+    `${ind0}const ${endV} = ${okVar} ? ${endVar} : ${pos}`,
   ]
   return { stmts, valueVar: valV, endVar: endV }
 }
@@ -475,44 +529,31 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
   const arrV = v(ctx, '_arr')
   const curV = v(ctx, '_cur')
 
-  // IIFE helpers — inner emit at indent 0 to avoid nested indentation noise
-  const iife = (inner: Combinator<unknown>, posExpr: string): string => {
-    const saved = ctx.indent
-    ctx.indent = 0
-    const r = emit(inner, ctx, posExpr)
-    ctx.indent = saved
-    return asIIFE(r.stmts, r.valueVar, r.endVar, posExpr, ind(ctx))
-  }
-
-  const firstR_saved = ctx.indent
-  ctx.indent = 0
-  const firstR = emit(def.parser, ctx, pos)
-  ctx.indent = firstR_saved
-
-  const firstV = v(ctx, '_sb0')
-  const sepV = v(ctx, '_sbs')
-  const nextV = v(ctx, '_sbn')
+  const { stmts: firstStmts, okVar: firstOk, valVar: firstVal, endVar: firstEnd } =
+    emitFallible(def.parser, ctx, pos)
 
   const stmts: string[] = [
     `${ind(ctx)}const ${arrV} = []`,
     `${ind(ctx)}let ${curV} = ${pos}`,
-    `${ind(ctx)}const ${firstV} = (() => { try { return ${asIIFE(firstR.stmts, firstR.valueVar, firstR.endVar, pos, ind(ctx))} } catch { return null } })()`,
-    `${ind(ctx)}if (${firstV}?.ok) {`,
+    ...firstStmts,
+    `${ind(ctx)}if (${firstOk}) {`,
   ]
   ctx.indent++
   stmts.push(
-    `${ind(ctx)}${arrV}.push(${firstV}.value)`,
-    `${ind(ctx)}${curV} = ${firstV}.span.end`,
+    `${ind(ctx)}${arrV}.push(${firstVal})`,
+    `${ind(ctx)}${curV} = ${firstEnd}`,
     `${ind(ctx)}while (${curV} < input.length) {`,
   )
   ctx.indent++
+  const { stmts: sepStmts, okVar: sepOk, endVar: sepEnd } = emitFallible(def.separator, ctx, curV)
+  stmts.push(...sepStmts, `${ind(ctx)}if (!${sepOk}) break`)
+  const { stmts: nextStmts, okVar: nextOk, valVar: nextVal, endVar: nextEnd } =
+    emitFallible(def.parser, ctx, sepEnd)
   stmts.push(
-    `${ind(ctx)}const ${sepV} = (() => { try { return ${iife(def.separator, curV)} } catch { return null } })()`,
-    `${ind(ctx)}if (!${sepV}?.ok) break`,
-    `${ind(ctx)}const ${nextV} = (() => { try { return ${iife(def.parser, `${sepV}.span.end`)} } catch { return null } })()`,
-    `${ind(ctx)}if (!${nextV}?.ok) break`,
-    `${ind(ctx)}${arrV}.push(${nextV}.value)`,
-    `${ind(ctx)}${curV} = ${nextV}.span.end`,
+    ...nextStmts,
+    `${ind(ctx)}if (!${nextOk}) break`,
+    `${ind(ctx)}${arrV}.push(${nextVal})`,
+    `${ind(ctx)}${curV} = ${nextEnd}`,
   )
   ctx.indent--
   stmts.push(`${ind(ctx)}}`)
@@ -527,15 +568,6 @@ function emitScanTo(
   ctx: Ctx,
   pos: string,
 ): ER {
-  // Helper: emit parser as a safe IIFE expression that returns result|null
-  const safeIIFE = (inner: Combinator<unknown>, posExpr: string): string => {
-    const saved = ctx.indent
-    ctx.indent = 0
-    const r = emit(inner, ctx, posExpr)
-    ctx.indent = saved
-    return `(() => { try { return ${asIIFE(r.stmts, r.valueVar, r.endVar, posExpr, ind(ctx))} } catch { return null } })()`
-  }
-
   const curV   = v(ctx, '_stcur')
   const foundV = v(ctx, '_stfnd')
   const stmts: string[] = [
@@ -545,21 +577,21 @@ function emitScanTo(
   ]
   ctx.indent++
 
-  // Sentinel check
-  const sentV = v(ctx, '_sts')
-  stmts.push(
-    `${ind(ctx)}const ${sentV} = ${safeIIFE(def.sentinel, curV)}`,
-    `${ind(ctx)}if (${sentV}?.ok) { ${foundV} = true; break }`,
-  )
+  // Sentinel check — labeled block, no IIFE
+  const { stmts: sentStmts, okVar: sentOk } = emitFallible(def.sentinel, ctx, curV)
+  stmts.push(...sentStmts, `${ind(ctx)}if (${sentOk}) { ${foundV} = true; break }`)
 
-  // Skippers — each wrapped so a failed/throwing skip just means "not this one"
+  // Skippers — labeled block per skipper; a failure just means "not this one"
   if (def.skip.length > 0) {
     const advV = v(ctx, '_stadv')
     stmts.push(`${ind(ctx)}let ${advV} = false`)
     for (const skipper of def.skip) {
-      const skV = v(ctx, '_sk')
+      const { stmts: skStmts, okVar: skOk, endVar: skEnd } = emitFallible(skipper, ctx, curV)
       stmts.push(
-        `${ind(ctx)}if (!${advV}) { const ${skV} = ${safeIIFE(skipper, curV)}; if (${skV}?.ok && ${skV}.span.end > ${curV}) { ${curV} = ${skV}.span.end; ${advV} = true } }`,
+        `${ind(ctx)}if (!${advV}) {`,
+        ...skStmts,
+        `${ind(ctx)}  if (${skOk} && ${skEnd} > ${curV}) { ${curV} = ${skEnd}; ${advV} = true }`,
+        `${ind(ctx)}}`,
       )
     }
     stmts.push(`${ind(ctx)}if (!${advV}) ${curV}++`)
@@ -576,9 +608,7 @@ function emitScanTo(
     const expectedStr = sentDef.tag === 'literal'
       ? JSON.stringify([JSON.stringify(sentDef.value)])
       : `["sentinel"]`
-    stmts.push(
-      `${ind(ctx)}if (!${foundV}) return { ok: false, expected: ${expectedStr}, span: { start: ${pos}, end: ${curV} } }`,
-    )
+    stmts.push(`${ind(ctx)}if (!${foundV}) ${failArr({ ...ctx, indent: 0 }, expectedStr, pos)}`)
   }
 
   const valV = v(ctx)
@@ -629,10 +659,13 @@ function emitLazy(p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'lazy' 
       return emitRuntimeFallback(p, ctx, pos)
     }
 
-    const savedIndent = ctx.indent
-    ctx.indent = 1
+    const savedIndent    = ctx.indent
+    const savedFailLabel = ctx.failLabel
+    ctx.indent    = 1
+    ctx.failLabel = undefined
     const r = emit(resolved, ctx, '_pos')
-    ctx.indent = savedIndent
+    ctx.indent    = savedIndent
+    ctx.failLabel = savedFailLabel
 
     ctx.namedFnDecls.push([
       `function ${fnName}(input, _pos, _ctx) {`,
@@ -649,7 +682,7 @@ function emitLazy(p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'lazy' 
   return {
     stmts: [
       `${ind(ctx)}const ${rv} = ${fnName}(input, ${pos}, _ctx)`,
-      `${ind(ctx)}if (!${rv}.ok) return ${rv}`,
+      `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"parser"', pos).trim()}`,
       `${ind(ctx)}const ${vv} = ${rv}.value`,
       `${ind(ctx)}const ${ev} = ${rv}.span.end`,
     ],
@@ -743,10 +776,13 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       if (!ctx.namedParsers.has(innerParser)) {
         const fnName = `_wcf${ctx.namedParsers.size}`
         ctx.namedParsers.set(innerParser, fnName)
-        const savedIndent = ctx.indent
-        ctx.indent = 1
+        const savedIndent    = ctx.indent
+        const savedFailLabel = ctx.failLabel
+        ctx.indent    = 1
+        ctx.failLabel = undefined  // named functions have their own scope; break can't cross
         const innerR = emit(innerParser, ctx, '_pos')
-        ctx.indent = savedIndent
+        ctx.indent    = savedIndent
+        ctx.failLabel = savedFailLabel
         ctx.namedFnDecls.push([
           `function ${fnName}(input, _pos, _ctx) {`,
           ...innerR.stmts,
@@ -762,7 +798,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       return {
         stmts: [
           `${ind(ctx)}const ${rv} = ${fn}(input, ${pos}, { ..._ctx, user: _mf[${evIdx}]() })`,
-          `${ind(ctx)}if (!${rv}.ok) return ${rv}`,
+          `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"withCtx"', pos).trim()}`,
           `${ind(ctx)}const ${vv} = ${rv}.value`,
           `${ind(ctx)}const ${ev} = ${rv}.span.end`,
         ],
@@ -796,6 +832,7 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
     vars: 0,
     indent: 1,
     regexDecls: [],
+    regexMap: new Map(),
     mapFns: [],
     runtimeParsers: [],
     needsCollator: false,

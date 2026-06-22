@@ -2,22 +2,18 @@
  * JSON parser built with parseman.
  *
  * Demonstrates:
- * - Recursive grammars via parser() — write grammar parser that reference each
+ * - Recursive grammars via parser() — write grammar rules that reference each
  *   other naturally; the engine handles forward declarations behind the scenes
  * - choice() with disjoint first-set dispatch ('{', '[', '"', digit/'-', 't', 'f', 'n')
  * - trivia for automatic whitespace skipping
  * - transform() for value construction
+ * - Macro compilation of recursive grammars — the parser() factory is evaluated
+ *   at build time by the parseman Vite/Rollup plugin, emitting optimized inline
+ *   functions with no runtime combinator overhead.
  *
  * To extend this parser see:
  *   examples/json/jsonl.ts  — newline-delimited JSON
  *   examples/json/jsonc.ts  — JSON with // and /* comments
- *
- * Macro note:
- *   The recursive structure (value → array → value) prevents full build-time
- *   compilation. For non-recursive parsers you can use:
- *     import { ... } from 'parseman' with { type: 'macro' }
- *   and a bundler with the parseman Vite/Rollup plugin to inline compiled code.
- *   See examples/vite.config.ts.
  */
 import {
   literal, regex, sequence, choice, optional, sepBy,

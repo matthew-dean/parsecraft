@@ -134,20 +134,26 @@ describe('codegen — sequence', () => {
 })
 
 describe('codegen — many', () => {
-  it('emits a while loop with IIFE body for infinite backtracking safety', () => {
+  it('emits a while loop with labeled block body', () => {
     const code = inline(many(literal('ab')))
     expect(code).toContain('while')
-    expect(code).toContain('(() => { try')  // IIFE wrapping for safe early-return
+    expect(code).toContain('_lbl')      // labeled block for early-exit control flow
+    expect(code).toContain('break _lbl')
     expect(code).toContain('_arr')
+    expect(code).not.toContain('(() => {')  // no IIFEs in loop body
+    expect(code).not.toContain('try')
   })
 })
 
 describe('codegen — optional', () => {
-  it('emits IIFE try/catch returning null on failure', () => {
+  it('emits labeled block with ok var, checked with ternary', () => {
     const code = inline(optional(literal('foo')))
-    expect(code).toContain('(() => { try')
-    expect(code).toContain('.ok ? ')        // ternary: ok ? value : null
+    expect(code).toContain('_lbl')      // labeled block
+    expect(code).toContain('break _lbl')
+    expect(code).toContain('? ')        // ternary: ok ? value : null
     expect(code).toContain(': null')
+    expect(code).not.toContain('(() => {')  // no IIFE
+    expect(code).not.toContain('try')
   })
 })
 
@@ -155,10 +161,9 @@ describe('codegen — sepBy', () => {
   it('emits first-item probe then while loop for rest', () => {
     const code = inline(sepBy(regex(/[0-9]+/), literal(',')))
     expect(code).toContain('_arr0')
-    expect(code).toContain('_sb0')    // first item probe
+    expect(code).toContain('_lbl')      // labeled blocks for first, sep, next probes
     expect(code).toContain('while')
-    expect(code).toContain('_sbs')    // separator probe
-    expect(code).toContain('_sbn')    // next-item probe
+    expect(code).not.toContain('try')
   })
 })
 
@@ -205,5 +210,36 @@ const p = transform(literal('hi'), s => s.toUpperCase())`,
     expect(result!.code).not.toContain('parseman')
     expect(result!.code).toContain('s => s.toUpperCase()')
     expect(result!.code).toContain('const _mf =')
+  })
+
+  it('compiles recursive parser() factories with sepBy — import removed, _pf0 emitted', () => {
+    const result = transformMacro(
+      `import { literal, sequence, choice, optional, sepBy, transform, trivia, regex, parser } from 'parseman' with { type: 'macro' }
+
+const ws = trivia(regex(/[ \\t]*/))
+const num = transform(regex(/[0-9]+/), s => Number(s))
+
+const { expr } = parser(g => {
+  const comma = sequence(ws, literal(','), ws)
+  const arr = transform(
+    sequence(literal('['), optional(sepBy(g.expr, comma)), literal(']')),
+    ([, items]) => items ?? []
+  )
+  return { expr: choice(arr, num) }
+})`,
+      'test.ts',
+      new Set(['parseman'])
+    )
+    expect(result).not.toBeNull()
+    const out = result!.code
+    // Import eliminated — macro fully compiled
+    expect(out).not.toContain("from 'parseman'")
+    expect(out).not.toContain('parser(')
+    // Named function for recursion present
+    expect(out).toContain('_pf0')
+    // Transform callbacks captured
+    expect(out).toContain('_mf')
+    expect(out).toContain('s => Number(s)')
+    expect(out).toContain('items ?? []')
   })
 })

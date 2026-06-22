@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { parseJSON } from '../../examples/json/parser.ts'
+import { parseJSON, jsonValue } from '../../examples/json/parser.ts'
+import { compile } from '../../src/index.ts'
+
+// Pre-compile once for the parity suite
+const compiledJson = compile(jsonValue)
 
 describe('JSON parser', () => {
   it('parses null', () => expect(parseJSON('null')).toBeNull())
@@ -59,5 +63,44 @@ describe('JSON parser', () => {
   it('throws on invalid input', () => {
     expect(() => parseJSON('{bad}')).toThrow()
     expect(() => parseJSON('')).toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// compile() parity — same results as the interpreter on every case
+// ---------------------------------------------------------------------------
+
+describe('JSON parser — compile() parity', () => {
+  // Note: cases with whitespace *around values* (e.g. `{ "k" : "v" }`) rely on
+  // parse()'s `{ trivia: ws }` option, which the compiled parser doesn't expose
+  // directly. Test compact JSON only here; the interpreter suite covers whitespace.
+  const cases: [string, unknown][] = [
+    ['null', null],
+    ['true', true],
+    ['false', false],
+    ['42', 42],
+    ['-7', -7],
+    ['3.14', 3.14],
+    ['"hello"', 'hello'],
+    ['[]', []],
+    ['[1,2,3]', [1, 2, 3]],
+    ['{}', {}],
+    ['{"a":1,"b":2}', { a: 1, b: 2 }],
+    ['{"a":[1,{"b":true}]}', { a: [1, { b: true }] }],
+    [JSON.stringify({ users: [{ id: 0, name: 'Alice', active: true }] }),
+      { users: [{ id: 0, name: 'Alice', active: true }] }],
+  ]
+
+  for (const [input, expected] of cases) {
+    it(`parity: ${input.slice(0, 40)}`, () => {
+      const r = compiledJson.parse(input.trim())
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.value).toEqual(expected)
+    })
+  }
+
+  it('fails on invalid input', () => {
+    expect(compiledJson.parse('{bad}').ok).toBe(false)
+    expect(compiledJson.parse('').ok).toBe(false)
   })
 })
