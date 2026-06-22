@@ -343,10 +343,11 @@ doc.errors  // ParseFail[], empty on success
 doc.input   // the source string
 
 // subsequent edits return a new doc — old one is untouched
-const doc2 = doc.edit(newSrc, changeStart, changeEnd)
+// edit(from, to, text): "select from→to in the old text, replace with text"
+const doc2 = doc.edit(changeStart, changeStart + changeLength, newText)
 ```
 
-`edit()` finds the smallest node containing the change, re-parses just that subtree using its saved context, and stops early when the new span end matches the expected position. O(changed region) amortized for typical edits. Nodes unaffected by the edit are structurally shared between old and new docs.
+`edit(from, to, text)` takes two byte offsets into the **old** text (`from` and `to`), plus the replacement string. Think of it as "highlight characters from→to, type text" — the same three things any editor already knows on every keystroke. Internally it runs `old.slice(0, from) + text + old.slice(to)`. It finds the smallest node containing the change, re-parses just that subtree using its saved context, and stops early when the new span end matches the expected position. O(changed region) amortized for typical edits. Nodes unaffected by the edit are structurally shared between old and new docs.
 
 Context-sensitive grammars work correctly: each CST node records a `ctx.user` snapshot at parse time (`savedContext`), so re-parsing resumes from the exact same state. Solid enough for a language server.
 
@@ -397,7 +398,7 @@ class LangParser extends Parser {
 }
 ```
 
-`Return` is only reachable inside a `Body` because `guard` rejects it when `inFn` is not set. `IncrementalParser` replays the correct context on incremental edits because `savedContext` captures the `inFn: true` snapshot at the node that originally set it.
+`Return` is only reachable inside a `Body` because `guard` rejects it when `inFn` is not set. `ParseDoc.edit()` replays the correct context on incremental edits because `savedContext` captures the `inFn: true` snapshot at the node that originally set it.
 
 ---
 

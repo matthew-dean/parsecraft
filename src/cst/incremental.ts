@@ -15,7 +15,7 @@ import type { CSTLeaf, CSTError, NodeLike } from './types.ts'
  *   doc.errors  // ParseFail[], empty on success
  *   doc.input   // the source string that produced this tree
  *
- *   const doc2 = doc.edit(newSrc, changeStart, changeEnd)
+ *   const doc2 = doc.edit(changeStart, changeEnd, newText)  // "select from→to, type newText"
  */
 export interface ParseDoc<N extends NodeLike = NodeLike> {
   readonly tree: N | null
@@ -24,16 +24,19 @@ export interface ParseDoc<N extends NodeLike = NodeLike> {
   /**
    * Incrementally re-parse after a text change.
    *
-   * @param changeStart  Byte offset where the change begins (same in old and new text).
-   * @param oldChangeEnd Byte offset where the replaced region ends in the OLD text (exclusive).
-   * @param newText      The replacement text (may be empty for a pure deletion).
+   * Think of it as "select from → to, type text": both `from` and `to` are
+   * byte offsets in the OLD input. `text` is what replaces that range.
+   *
+   *   doc.edit(3, 7, 'hi')  →  old: "foo [XXXX] bar"   new: "foo hi bar"
+   *                                       ↑    ↑
+   *                                      from  to   (both in old text)
    *
    * Maps directly to editor change events:
-   *   VSCode:     doc.edit(change.rangeOffset, change.rangeOffset + change.rangeLength, change.text)
-   *   CodeMirror: doc.edit(change.from, change.to, change.insert)
-   *   LSP:        doc.edit(startByte, endByte, change.text)  // after line/col → byte conversion
+   *   VSCode / Monaco:  doc.edit(change.rangeOffset, change.rangeOffset + change.rangeLength, change.text)
+   *   CodeMirror 6:     doc.edit(change.from, change.to, change.insert)
+   *   LSP:              doc.edit(startByte, endByte, change.text)  // after line/col → byte offset
    */
-  edit(changeStart: number, oldChangeEnd: number, newText: string): ParseDoc<N>
+  edit(from: number, to: number, text: string): ParseDoc<N>
 }
 
 // ---------------------------------------------------------------------------
@@ -107,13 +110,13 @@ class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
     this.input     = input
   }
 
-  edit(changeStart: number, oldChangeEnd: number, newText: string): ParseDoc<N> {
-    const newInput = this.input.slice(0, changeStart) + newText + this.input.slice(oldChangeEnd)
+  edit(from: number, to: number, text: string): ParseDoc<N> {
+    const newInput = this.input.slice(0, from) + text + this.input.slice(to)
 
     if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
 
-    const delta = newText.length - (oldChangeEnd - changeStart)
-    const found = findContaining(this.tree, changeStart)
+    const delta = text.length - (to - from)
+    const found = findContaining(this.tree, from)
     if (!found) return makeParseDoc(this._parser, this._ruleName, newInput)
 
     const ancestors = ancestorsAt(this.tree, found.path)
