@@ -17,43 +17,54 @@ const COLORS: Record<string, string> = {
   'Chevrotain':               '#BA7517',
 }
 
+const COMPILE_OVERHEAD_COLOR = '#D0C8FF' // lighter segment for compile() cost within the stacked bar
+
 const ALL_LEGEND = Object.entries(COLORS)
 
-interface Row { name: string; us: number }
+interface Row {
+  name: string
+  us: number
+  // For stacked bars: us is total, parseUs is the parse-only portion (compile overhead = us - parseUs)
+  parseUs?: number
+}
 interface ChartData { subtitle: string; rows: Row[] }
+
+// Measured compile() cost: ~46µs JSON, ~44µs CSV
+const JSON_COMPILE_US = 44
+const CSV_COMPILE_US  = 44
 
 const JSON_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (52 bytes)',
     rows: [
-      { name: 'Parséman (macro build)',   us: 2.03 },
-      { name: 'Peggy',                    us: 2.62 },
-      { name: 'Parséman (no compile)',    us: 3.75 },
-      { name: 'Parsimmon',               us: 6.04 },
-      { name: 'Chevrotain',              us: 7.38 },
-      { name: 'Parséman (w/ .compile())', us: 46.10 },
+      { name: 'Parséman (macro build)',    us: 2.03 },
+      { name: 'Peggy',                     us: 2.62 },
+      { name: 'Parséman (no compile)',     us: 3.75 },
+      { name: 'Parsimmon',                us: 6.04 },
+      { name: 'Chevrotain',               us: 7.38 },
+      { name: 'Parséman (w/ .compile())', us: 46.10, parseUs: 2.03 },
     ],
   },
   {
     subtitle: 'medium  (1.8 kB)',
     rows: [
-      { name: 'Parséman (macro build)',   us: 57.88 },
-      { name: 'Peggy',                    us: 66.64 },
-      { name: 'Parséman (w/ .compile())', us: 101.31 },
-      { name: 'Parséman (no compile)',    us: 112.76 },
-      { name: 'Parsimmon',               us: 193.09 },
-      { name: 'Chevrotain',              us: 232.88 },
+      { name: 'Parséman (macro build)',    us: 57.88 },
+      { name: 'Peggy',                     us: 66.64 },
+      { name: 'Parséman (w/ .compile())', us: 101.31, parseUs: 57.88 },
+      { name: 'Parséman (no compile)',     us: 112.76 },
+      { name: 'Parsimmon',                us: 193.09 },
+      { name: 'Chevrotain',               us: 232.88 },
     ],
   },
   {
     subtitle: 'large  (12 kB)',
     rows: [
-      { name: 'Peggy',                    us: 472.06 },
-      { name: 'Parséman (macro build)',   us: 525.08 },
-      { name: 'Parséman (w/ .compile())', us: 568.00 },
-      { name: 'Parséman (no compile)',    us: 1016.27 },
-      { name: 'Parsimmon',               us: 1489.59 },
-      { name: 'Chevrotain',              us: 1800.58 },
+      { name: 'Peggy',                     us: 472.06 },
+      { name: 'Parséman (macro build)',    us: 525.08 },
+      { name: 'Parséman (w/ .compile())', us: 568.00, parseUs: 525.08 },
+      { name: 'Parséman (no compile)',     us: 1016.27 },
+      { name: 'Parsimmon',                us: 1489.59 },
+      { name: 'Chevrotain',               us: 1800.58 },
     ],
   },
 ]
@@ -62,23 +73,23 @@ const CSV_CHARTS: ChartData[] = [
   {
     subtitle: 'small  (54 bytes)',
     rows: [
-      { name: 'Parséman (macro build)',   us: 0.92 },
-      { name: 'Parséman (no compile)',    us: 1.93 },
-      { name: 'Peggy',                    us: 2.08 },
-      { name: 'Parsimmon',               us: 3.65 },
-      { name: 'Chevrotain',              us: 5.47 },
-      { name: 'Parséman (w/ .compile())', us: 43.56 },
+      { name: 'Parséman (macro build)',    us: 0.92 },
+      { name: 'Parséman (no compile)',     us: 1.93 },
+      { name: 'Peggy',                     us: 2.08 },
+      { name: 'Parsimmon',                us: 3.65 },
+      { name: 'Chevrotain',               us: 5.47 },
+      { name: 'Parséman (w/ .compile())', us: 43.56, parseUs: 0.92 },
     ],
   },
   {
     subtitle: 'large  (14.8 kB)',
     rows: [
-      { name: 'Parséman (macro build)',   us: 160.03 },
-      { name: 'Parséman (w/ .compile())', us: 197.92 },
-      { name: 'Parséman (no compile)',    us: 340.71 },
-      { name: 'Peggy',                    us: 438.34 },
-      { name: 'Parsimmon',               us: 447.79 },
-      { name: 'Chevrotain',              us: 1054.02 },
+      { name: 'Parséman (macro build)',    us: 160.03 },
+      { name: 'Parséman (w/ .compile())', us: 197.92, parseUs: 160.03 },
+      { name: 'Parséman (no compile)',     us: 340.71 },
+      { name: 'Peggy',                     us: 438.34 },
+      { name: 'Parsimmon',                us: 447.79 },
+      { name: 'Chevrotain',               us: 1054.02 },
     ],
   },
 ]
@@ -108,7 +119,7 @@ function buildSVG(
   const els: string[] = []
   let y = PAD
 
-  // Legend — two rows
+  // Legend — two rows of 3
   const row1 = legendEntries.slice(0, 3)
   const row2 = legendEntries.slice(3)
 
@@ -144,14 +155,25 @@ function buildSVG(
     const maxUs = Math.max(...chart.rows.map(r => r.us))
 
     for (const row of chart.rows) {
-      const barW = Math.max(3, (row.us / maxUs) * BAR_MAX_W)
-      const color = COLORS[row.name] || '#888'
-      const barY = y + (ROW_H - BAR_H) / 2
+      const totalW = Math.max(3, (row.us / maxUs) * BAR_MAX_W)
+      const color  = COLORS[row.name] || '#888'
+      const barY   = y + (ROW_H - BAR_H) / 2
 
       els.push(`<text x="${PAD + LABEL_W}" y="${y + ROW_H / 2 + 4}" text-anchor="end" font-size="12" fill="${TEXT_DARK}" font-family="${FONT}">${esc(row.name)}</text>`)
       els.push(`<rect x="${BAR_START_X}" y="${barY}" width="${BAR_MAX_W}" height="${BAR_H}" rx="3" fill="${TRACK_BG}"/>`)
-      els.push(`<rect x="${BAR_START_X}" y="${barY}" width="${barW.toFixed(1)}" height="${BAR_H}" rx="3" fill="${color}"/>`)
-      els.push(`<text x="${BAR_START_X + barW + 7}" y="${y + ROW_H / 2 + 4}" font-size="11" fill="${TEXT_MED}" font-family="${FONT}">${fmtUs(row.us)}</text>`)
+
+      if (row.parseUs !== undefined) {
+        // Stacked bar: parse portion (solid) + compile overhead (lighter)
+        const parseW   = Math.max(3, (row.parseUs / maxUs) * BAR_MAX_W)
+        const overheadW = totalW - parseW
+        // Full bar in overhead color first (rounded ends), then parse portion on top
+        els.push(`<rect x="${BAR_START_X}" y="${barY}" width="${totalW.toFixed(1)}" height="${BAR_H}" rx="3" fill="${COMPILE_OVERHEAD_COLOR}"/>`)
+        els.push(`<rect x="${BAR_START_X}" y="${barY}" width="${parseW.toFixed(1)}" height="${BAR_H}" rx="3" fill="${color}"/>`)
+      } else {
+        els.push(`<rect x="${BAR_START_X}" y="${barY}" width="${totalW.toFixed(1)}" height="${BAR_H}" rx="3" fill="${color}"/>`)
+      }
+
+      els.push(`<text x="${BAR_START_X + totalW + 7}" y="${y + ROW_H / 2 + 4}" font-size="11" fill="${TEXT_MED}" font-family="${FONT}">${fmtUs(row.us)}</text>`)
 
       y += ROW_H
     }
