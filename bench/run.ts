@@ -13,7 +13,7 @@
  *       OR: pnpm bench
  */
 import { parseJSON, jsonValue } from '../examples/json/parser.ts'
-import { parseCSV, compiledCSV } from '../examples/csv/parser.ts'
+import { parseCSV, compiledCSV, csvParser } from '../examples/csv/parser.ts'
 import { parseConfig, compiledConfig } from '../examples/toml-ish/parser.ts'
 import { compile } from '../src/index.ts'
 import { buildChevrotainJSON } from './chevrotain-json.ts'
@@ -77,12 +77,13 @@ console.log('\n=== JSON parsing ===')
 
 function jsonGroup(label: string, input: string, iters: number) {
   console.log(`\n  [${label}] ${input.length} bytes`)
-  bench('Parséman (interpreter)',     () => parseJSON(input), iters)
-  bench('Parséman (compiled)',   () => compiledJSON.parse(input, 0), iters)
-  bench('Chevrotain',            () => chevrotainJSON(input), iters)
-  bench('Parsimmon',             () => parsimmonJSON(input), iters)
-  bench('Peggy',                 () => peggyJSON(input), iters)
-  bench('JSON.parse (native)',   () => JSON.parse(input), iters)
+  bench('Parséman (macro build)',      () => compiledJSON.parse(input, 0), iters)
+  bench('Parséman (w/ .compile())',   () => compile(jsonValue).parse(input, 0), Math.min(iters, 5_000))
+  bench('Parséman (no compile)',       () => parseJSON(input), iters)
+  bench('Chevrotain',                  () => chevrotainJSON(input), iters)
+  bench('Parsimmon',                   () => parsimmonJSON(input), iters)
+  bench('Peggy',                       () => peggyJSON(input), iters)
+  bench('JSON.parse (native)',         () => JSON.parse(input), iters)
 }
 
 jsonGroup('small',  SMALL_JSON,  50_000)
@@ -97,11 +98,12 @@ console.log('\n=== CSV parsing ===')
 function csvGroup(label: string, input: string, iters: number) {
   const rows = input.split('\n').length - 1
   console.log(`\n  [${label}] ${input.length} bytes, ${rows} rows`)
-  bench('Parséman (interpreter)',     () => parseCSV(input), iters)
-  bench('Parséman (compiled)',   () => compiledCSV.parse(input), iters)
-  bench('Chevrotain',            () => chevrotainCSV(input), iters)
-  bench('Parsimmon',             () => parsimmonCSV(input), iters)
-  bench('Peggy',                 () => peggyCSV(input), iters)
+  bench('Parséman (macro build)',      () => compiledCSV.parse(input), iters)
+  bench('Parséman (w/ .compile())',   () => compile(csvParser).parse(input), Math.min(iters, 5_000))
+  bench('Parséman (no compile)',       () => parseCSV(input), iters)
+  bench('Chevrotain',                  () => chevrotainCSV(input), iters)
+  bench('Parsimmon',                   () => parsimmonCSV(input), iters)
+  bench('Peggy',                       () => peggyCSV(input), iters)
 }
 
 csvGroup('small', SMALL_CSV, 50_000)
