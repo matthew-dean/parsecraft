@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/parseman.png" alt="Parmésan — 100% Pure Parsing" width="220" />
+  <img src="https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/parseman.png" alt="Parmésan — 100% Pure Parsing" width="220" />
 </p>
 
 # Parmésan (PAR-zə-mahn)
@@ -7,6 +7,18 @@
 Write parsers with combinators, then let the bundler plugin compile them to optimized inline functions at build time — `charCodeAt` dispatch, `while` loops, zero allocation on failure paths. No generated boilerplate, no codegen step, no separate schema files.
 
 The same code runs without the plugin: the interpreter produces identical results. Use the macro build for production; skip it in tests and anywhere a bundler isn't in the picture.
+
+## Benchmarks
+
+Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
+
+![JSON parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-json.svg)
+
+![CSV parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-csv.svg)
+
+Parmésan compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parmésan compiled wins going away.
+
+---
 
 ## Install
 
@@ -480,18 +492,6 @@ type CSTTrivia = { _tag: 'trivia'; value: string; span: Span }  // only in rawCh
 type CSTChild    = CSTNode | CSTLeaf | CSTError
 type CSTRawChild = CSTNode | CSTLeaf | CSTTrivia | CSTError
 ```
-
----
-
-## Benchmarks
-
-Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
-
-![JSON parsing benchmarks](assets/bench-json.svg)
-
-![CSV parsing benchmarks](assets/bench-csv.svg)
-
-Parmésan compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parmésan compiled wins going away.
 
 ---
 
