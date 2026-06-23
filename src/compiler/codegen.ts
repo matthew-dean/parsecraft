@@ -6,7 +6,7 @@
  * `break <label>` rather than an IIFE return — no function call, no result
  * object allocation per node.
  */
-import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ChoiceStrategy } from '../types.ts'
+import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ParseError, ChoiceStrategy } from '../types.ts'
 import { getCoreLiteralValue, getCoreRegexDef } from '../combinators/choice.ts'
 
 // ---------------------------------------------------------------------------
@@ -497,7 +497,20 @@ function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: C
 
   stmts.push(`${ind(ctx)}while (${curV} < input.length) {`)
   ctx.indent++
-  const { stmts: iterStmts, okVar: iterOk, valVar: iterVal, endVar: iterEnd } = emitFallible(def.parser, ctx, curV)
+
+  // Mirror interpreter repeat.ts — skip trivia before each iteration (including first).
+  let itemPos = curV
+  if (ctx.activeTrivia) {
+    const trivFn = ensureTriviaFn(ctx)
+    const npV = v(ctx, '_np')
+    stmts.push(
+      `${ind(ctx)}let ${npV} = ${curV}`,
+      `${ind(ctx)}{ const _trv = ${trivFn}(input, ${npV}, _ctx); if (_trv.ok) ${npV} = _trv.span.end }`,
+    )
+    itemPos = npV
+  }
+
+  const { stmts: iterStmts, okVar: iterOk, valVar: iterVal, endVar: iterEnd } = emitFallible(def.parser, ctx, itemPos)
   stmts.push(
     ...iterStmts,
     `${ind(ctx)}if (!${iterOk} || ${iterEnd} === ${curV}) break`,
@@ -545,10 +558,35 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
     `${ind(ctx)}while (${curV} < input.length) {`,
   )
   ctx.indent++
-  const { stmts: sepStmts, okVar: sepOk, endVar: sepEnd } = emitFallible(def.separator, ctx, curV)
+
+  // Mirror interpreter repeat.ts — skip trivia before and after separator.
+  let sepAtPos = curV
+  if (ctx.activeTrivia) {
+    const trivFn = ensureTriviaFn(ctx)
+    const spV = v(ctx, '_sp')
+    stmts.push(
+      `${ind(ctx)}let ${spV} = ${curV}`,
+      `${ind(ctx)}{ const _trv = ${trivFn}(input, ${spV}, _ctx); if (_trv.ok) ${spV} = _trv.span.end }`,
+    )
+    sepAtPos = spV
+  }
+
+  const { stmts: sepStmts, okVar: sepOk, endVar: sepEnd } = emitFallible(def.separator, ctx, sepAtPos)
   stmts.push(...sepStmts, `${ind(ctx)}if (!${sepOk}) break`)
+
+  let nextAtPos = sepEnd
+  if (ctx.activeTrivia) {
+    const trivFn = ensureTriviaFn(ctx)
+    const npV = v(ctx, '_np')
+    stmts.push(
+      `${ind(ctx)}let ${npV} = ${sepEnd}`,
+      `${ind(ctx)}{ const _trv = ${trivFn}(input, ${npV}, _ctx); if (_trv.ok) ${npV} = _trv.span.end }`,
+    )
+    nextAtPos = npV
+  }
+
   const { stmts: nextStmts, okVar: nextOk, valVar: nextVal, endVar: nextEnd } =
-    emitFallible(def.parser, ctx, sepEnd)
+    emitFallible(def.parser, ctx, nextAtPos)
   stmts.push(
     ...nextStmts,
     `${ind(ctx)}if (!${nextOk}) break`,
@@ -624,7 +662,7 @@ function emitRuntimeFallback(parser: Combinator<unknown>, ctx: Ctx, pos: string)
   const ev = v(ctx, '_rte')
   const stmts = [
     `${ind(ctx)}const ${rv} = _rp[${idx}].parse(input, ${pos}, _ctx)`,
-    `${ind(ctx)}if (!${rv}.ok) return ${rv}`,
+    `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"runtime"', pos).trim()}`,
     `${ind(ctx)}const ${vv} = ${rv}.value`,
     `${ind(ctx)}const ${ev} = ${rv}.span.end`,
   ]
@@ -691,6 +729,39 @@ function emitLazy(p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'lazy' 
   }
 }
 
+// ── recover: try inner; on failure scan to sentinel, emit ParseError node ────
+function emitRecover(def: Extract<ParserDef, { tag: 'recover' }>, ctx: Ctx, pos: string): ER {
+  const { stmts: innerStmts, okVar, valVar, endVar } = emitFallible(def.parser, ctx, pos)
+
+  const ind0  = ind(ctx)
+  const scanV = v(ctx, '_sc')
+  const errV  = v(ctx, '_err')
+
+  // Sentinel check runs inside the while loop — indent 2 extra levels (if + while)
+  const savedIndent = ctx.indent
+  ctx.indent += 2
+  const { stmts: sentStmts, okVar: sentOk } = emitFallible(def.sentinel, ctx, scanV)
+  ctx.indent = savedIndent
+
+  const stmts: string[] = [
+    ...innerStmts,
+    `${ind0}if (!${okVar}) {`,
+    `${ind0}  let ${scanV} = ${pos}`,
+    `${ind0}  while (${scanV} < input.length) {`,
+    ...sentStmts,
+    `${ind0}    if (${sentOk}) break`,
+    `${ind0}    ${scanV}++`,
+    `${ind0}  }`,
+    `${ind0}  const ${errV} = { _tag: 'parseError', span: { start: ${pos}, end: ${scanV} }, expected: [] }`,
+    `${ind0}  if (_ctx._errors) _ctx._errors.push(${errV})`,
+    `${ind0}  ${valVar} = ${errV}`,
+    `${ind0}  ${endVar} = ${scanV}`,
+    `${ind0}  ${okVar} = true`,
+    `${ind0}}`,
+  ]
+  return { stmts, valueVar: valVar, endVar }
+}
+
 // ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
@@ -749,7 +820,8 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       else ctx.activeTrivia = savedTrivia
       return r
     }
-    case 'scanTo': return emitScanTo(def, ctx, pos)
+    case 'scanTo':  return emitScanTo(def, ctx, pos)
+    case 'recover': return emitRecover(def, ctx, pos)
     case 'guard': {
       const fnIdx = ctx.mapFns.length
       ctx.mapFns.push(def.predicate as (v: unknown, span: unknown) => unknown)
@@ -815,6 +887,12 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
 // ---------------------------------------------------------------------------
 export type CompiledParser<T> = {
   parse(input: string, pos?: number): ParseResult<T>
+  /**
+   * Like parse(), but activates error recovery. recover() nodes collect their
+   * ParseErrors into result.errors instead of (only) embedding them as values.
+   * Always returns ParseOk — top-level failures are still ParseFail.
+   */
+  parseWithErrors(input: string, pos?: number): ParseResult<T> & { errors: ParseError[] }
   /** The generated source (for inspection / future source maps) */
   source: string
   /**
@@ -885,6 +963,11 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
     inlineExpression,
     parse(input: string, pos = 0): ParseResult<T> {
       return fn(input, pos, ctx.runtimeParsers, ctx.mapFns, defaultCtx)
+    },
+    parseWithErrors(input: string, pos = 0): ParseResult<T> & { errors: ParseError[] } {
+      const errors: ParseError[] = []
+      const result = fn(input, pos, ctx.runtimeParsers, ctx.mapFns, { ...defaultCtx, _errors: errors })
+      return { ...result, errors } as ParseResult<T> & { errors: ParseError[] }
     },
   }
 }

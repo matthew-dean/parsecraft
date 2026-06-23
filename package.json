@@ -34,7 +34,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc",
-    "bench": "node --import tsx/esm bench/run.ts"
+    "bench": "node --import tsx/esm bench/run.ts",
+    "bench:compile-grammars": "peggy --format es -o bench/json-parser.js bench/json.pegjs && peggy --format es -o bench/csv-parser.js bench/csv.pegjs && peggy --format es -o bench/graphqlite-parser.js bench/graphqlite.pegjs"
   },
   "keywords": [
     "parser",
@@ -56,7 +57,8 @@
     "tsx": "~4.22.4",
     "typescript": "7.0.1-rc",
     "vite": "~8.0.16",
-    "vitest": "~4.1.9"
+    "vitest": "~4.1.9",
+    "xregexp": "~5.1.2"
   },
   "dependencies": {
     "magic-string": "~0.30.21",

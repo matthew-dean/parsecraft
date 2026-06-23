@@ -2,12 +2,12 @@
  * JSON parser built with parseman.
  *
  * Demonstrates:
- * - Recursive grammars via parser() — write grammar rules that reference each
+ * - Recursive grammars via rules() — write grammar rules that reference each
  *   other naturally; the engine handles forward declarations behind the scenes
  * - choice() with disjoint first-set dispatch ('{', '[', '"', digit/'-', 't', 'f', 'n')
  * - trivia for automatic whitespace skipping
  * - transform() for value construction
- * - Macro compilation of recursive grammars — the parser() factory is evaluated
+ * - Macro compilation of recursive grammars — the rules() factory is evaluated
  *   at build time by the parseman Vite/Rollup plugin, emitting optimized inline
  *   functions with no runtime combinator overhead.
  *
@@ -17,7 +17,7 @@
  */
 import {
   literal, regex, sequence, choice, optional, sepBy,
-  transform, trivia, parser, parse,
+  transform, trivia, parser, rules,
   type Combinator,
 } from '../../src/index.ts'
 
@@ -27,7 +27,7 @@ import {
 export const ws = trivia(regex(/[ \t\n\r]*/))
 
 // ---------------------------------------------------------------------------
-// Primitives (non-recursive — defined outside parser())
+// Primitives (non-recursive — defined outside rules())
 // ---------------------------------------------------------------------------
 const jsonNull  = transform(literal('null'),  () => null)
 const jsonTrue  = transform(literal('true'),  () => true)
@@ -58,11 +58,11 @@ export const jsonString = transform(
 // ---------------------------------------------------------------------------
 export type JSONValue = null | boolean | number | string | JSONValue[] | Record<string, JSONValue>
 
-// parser() defines the mutually recursive portion. Local helpers (comma, key, pair)
+// rules() defines the mutually recursive portion. Local helpers (comma, key, pair)
 // are plain consts inside the factory — they don't need to appear in the returned
 // object because no other rule references them via `g.*`.
-export const { jsonValue } = parser<{ jsonValue: Combinator<JSONValue> }>(g => {
-  const comma = sequence(ws, literal(','), ws)
+export const { jsonValue } = rules<{ jsonValue: Combinator<JSONValue> }>(g => {
+  const comma = literal(',')
 
   const jsonArray = transform(
     sequence(literal('['), optional(sepBy(g.jsonValue as Combinator<JSONValue>, comma)), literal(']')),
@@ -70,8 +70,8 @@ export const { jsonValue } = parser<{ jsonValue: Combinator<JSONValue> }>(g => {
   )
 
   const jsonKey = transform(
-    sequence(ws, jsonString, ws, literal(':')),
-    ([, key]) => key
+    sequence(jsonString, literal(':')),
+    ([key]) => key
   )
   const jsonPair = transform(
     sequence(jsonKey, g.jsonValue as Combinator<JSONValue>),
@@ -91,8 +91,12 @@ export const { jsonValue } = parser<{ jsonValue: Combinator<JSONValue> }>(g => {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/** Document-level JSON parser with trivia baked in. */
+export const jsonDoc = parser({ trivia: ws }, jsonValue)
+
 export function parseJSON(input: string): JSONValue {
-  const result = parse(jsonValue, input.trim(), { trivia: ws })
+  const result = jsonDoc.parse(input.trim())
   if (!result.ok) {
     throw new SyntaxError(
       `JSON parse error at offset ${result.span.start}: expected ${result.expected.join(' or ')}`
@@ -103,19 +107,20 @@ export function parseJSON(input: string): JSONValue {
 
 /**
  * Factory for building JSON-like parsers with a custom trivia (whitespace+comments) parser.
+ * Returns a self-contained parser with trivia baked in — no need to pass trivia to parse().
  * Used by jsonc.ts to add comment support.
  */
-export function makeJSONParser(customWs: typeof ws = ws): Combinator<JSONValue> {
-  const { value } = parser<{ value: Combinator<JSONValue> }>(g => {
-    const comma = sequence(customWs, literal(','), customWs)
+export function makeJSONParser(customWs: typeof ws = ws) {
+  const { value } = rules<{ value: Combinator<JSONValue> }>(g => {
+    const comma = literal(',')
 
     const array = transform(
       sequence(literal('['), optional(sepBy(g.value as Combinator<JSONValue>, comma)), literal(']')),
       ([, items]) => (items ?? []) as JSONValue[]
     )
     const key = transform(
-      sequence(customWs, jsonString, customWs, literal(':')),
-      ([, k]) => k
+      sequence(jsonString, literal(':')),
+      ([k]) => k
     )
     const pair = transform(
       sequence(key, g.value as Combinator<JSONValue>),
@@ -130,7 +135,5 @@ export function makeJSONParser(customWs: typeof ws = ws): Combinator<JSONValue> 
       value: choice(object, array, jsonString, jsonNumber, jsonTrue, jsonFalse, jsonNull) as Combinator<JSONValue>,
     }
   })
-  return value
+  return parser({ trivia: customWs }, value)
 }
-
-// Note: callers of makeJSONParser() must pass { trivia: customWs } to parse()

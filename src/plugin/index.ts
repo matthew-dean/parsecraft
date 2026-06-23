@@ -160,11 +160,11 @@ export function transformMacro(
         scope.set(varName, { combi: parser, mfSrcs: mapFnSources })
 
       } else if ((d.id as unknown as { type: string }).type === 'ObjectPattern') {
-        // ── Destructured binding: const { a, b } = parser(g => { ... }) ──
-        // Only handle parser() factory calls
+        // ── Destructured binding: const { a, b } = rules(g => { ... }) ──
+        // Only handle rules() factory calls
         if (init.type !== 'CallExpression') continue
         const calleeType = (init as unknown as { callee: { type: string; name?: string } }).callee
-        if (calleeType.type !== 'Identifier' || calleeType.name !== 'parser') continue
+        if (calleeType.type !== 'Identifier' || calleeType.name !== 'rules') continue
         if (!referencesAny(init, allNames, scope)) continue
 
         const args = (init as unknown as { arguments: unknown[] }).arguments

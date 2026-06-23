@@ -13,7 +13,7 @@
  */
 import {
   literal, regex, sequence, choice, many, optional, transform,
-  trivia, parse, compile,
+  trivia, parser, compile,
 } from '../../src/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ const entryLine = transform(
 
 const line: typeof commentLine = choice(commentLine, sectionLine, entryLine)
 
-const configFile = many(line)
+const configParser = parser({ trivia: ws }, many(line))
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -66,7 +66,7 @@ export type Config = Record<string, Record<string, string | number | boolean>>
 
 export function parseConfig(input: string): Config {
   const inputWithNewline = input.endsWith('\n') ? input : input + '\n'
-  const result = parse(configFile, inputWithNewline, { trivia: ws })
+  const result = configParser.parse(inputWithNewline)
   if (!result.ok) throw new Error(`Config parse error at offset ${result.span.start}`)
 
   const config: Config = {}
@@ -85,4 +85,4 @@ export function parseConfig(input: string): Config {
   return config
 }
 
-export const compiledConfig = compile(configFile)
+export const compiledConfig = compile(configParser)

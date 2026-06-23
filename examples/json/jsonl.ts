@@ -5,17 +5,19 @@
  * one value per line, lines separated by '\n'.
  *
  * Format: https://jsonlines.org
+ *
+ * Uses horizontal-only trivia (spaces and tabs) so that '\n' stays available
+ * as the line separator rather than being consumed by whitespace skipping.
  */
-import { sepBy, transform, literal, parse } from '../../src/index.ts'
+import { regex, sepBy, trivia, literal, parser, parse } from '../../src/index.ts'
 import { jsonValue, type JSONValue } from './parser.ts'
 
-export const jsonl = transform(
-  sepBy(jsonValue, literal('\n')),
-  lines => lines
-)
+const lineWs = trivia(regex(/[ \t]*/))
+
+export const jsonl = parser({ trivia: lineWs }, sepBy(jsonValue, literal('\n')))
 
 export function parseJSONL(input: string): JSONValue[] {
-  const result = parse(jsonl, input.trim())
+  const result = jsonl.parse(input.trim())
   if (!result.ok) throw new SyntaxError(`JSONL parse error at offset ${result.span.start}`)
   return result.value
 }

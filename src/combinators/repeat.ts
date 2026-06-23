@@ -15,7 +15,18 @@ export function many<T>(parser: Combinator<T>): Combinator<T[]> {
       const values: T[] = []
       let cur = pos
       while (cur < input.length) {
-        const result = parser.parse(input, cur, ctx)
+        let result = parser.parse(input, cur, ctx)
+        // If item fails and trivia is active, skip trivia then retry.
+        // Try item first to avoid trivia consuming content the item parser needs
+        // (e.g. when many() is used inside the trivia combinator itself).
+        if (!result.ok && ctx.trivia) {
+          const tc = { trackLines: ctx.trackLines, user: ctx.user }
+          const tr = ctx.trivia.parse(input, cur, tc)
+          if (tr.ok && tr.span.end > cur) {
+            if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span })
+            result = parser.parse(input, tr.span.end, ctx)
+          }
+        }
         if (!result.ok) break
         if (result.span.end === cur) break
         values.push(result.value)
@@ -43,7 +54,16 @@ export function oneOrMore<T>(parser: Combinator<T>): Combinator<T[]> {
       const values: T[] = [first.value]
       let cur = first.span.end
       while (cur < input.length) {
-        const result = parser.parse(input, cur, ctx)
+        let nextPos = cur
+        let result = parser.parse(input, cur, ctx)
+        if (!result.ok && ctx.trivia) {
+          const tc = { trackLines: ctx.trackLines, user: ctx.user }
+          const tr = ctx.trivia.parse(input, cur, tc)
+          if (tr.ok && tr.span.end > cur) {
+            if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span })
+            result = parser.parse(input, tr.span.end, ctx)
+          }
+        }
         if (!result.ok) break
         if (result.span.end === cur) break
         values.push(result.value)
@@ -91,11 +111,11 @@ export function sepBy<T, S>(parser: Combinator<T>, separator: Combinator<S>): Co
       let cur = first.span.end
       while (cur < input.length) {
         let sepPos = cur
-        if (ctx.trivia) { const triviaCtx = { trivia: ctx.trivia, trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, sepPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); sepPos = tr.span.end } }
+        if (ctx.trivia) { const triviaCtx = { trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, sepPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); sepPos = tr.span.end } }
         const sep = separator.parse(input, sepPos, ctx)
         if (!sep.ok) break
         let nextPos = sep.span.end
-        if (ctx.trivia) { const triviaCtx = { trivia: ctx.trivia, trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, nextPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); nextPos = tr.span.end } }
+        if (ctx.trivia) { const triviaCtx = { trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, nextPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); nextPos = tr.span.end } }
         const next = parser.parse(input, nextPos, ctx)
         if (!next.ok) break
         values.push(next.value)

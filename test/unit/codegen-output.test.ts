@@ -212,14 +212,14 @@ const p = transform(literal('hi'), s => s.toUpperCase())`,
     expect(result!.code).toContain('const _mf =')
   })
 
-  it('compiles recursive parser() factories with sepBy — import removed, _pf0 emitted', () => {
+  it('compiles recursive rules() factories with sepBy — import removed, _pf0 emitted', () => {
     const result = transformMacro(
-      `import { literal, sequence, choice, optional, sepBy, transform, trivia, regex, parser } from 'parseman' with { type: 'macro' }
+      `import { literal, sequence, choice, optional, sepBy, transform, trivia, regex, rules } from 'parseman' with { type: 'macro' }
 
 const ws = trivia(regex(/[ \\t]*/))
 const num = transform(regex(/[0-9]+/), s => Number(s))
 
-const { expr } = parser(g => {
+const { expr } = rules(g => {
   const comma = sequence(ws, literal(','), ws)
   const arr = transform(
     sequence(literal('['), optional(sepBy(g.expr, comma)), literal(']')),
@@ -234,7 +234,7 @@ const { expr } = parser(g => {
     const out = result!.code
     // Import eliminated — macro fully compiled
     expect(out).not.toContain("from 'parseman'")
-    expect(out).not.toContain('parser(')
+    expect(out).not.toContain('rules(')
     // Named function for recursion present
     expect(out).toContain('_pf0')
     // Transform callbacks captured

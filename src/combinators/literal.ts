@@ -1,5 +1,6 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
 import { fromChar, empty } from './first-set.ts'
+import { failAt } from './probe.ts'
 
 let _collatorCache: Intl.Collator | null = null
 function collator(): Intl.Collator {
@@ -42,10 +43,10 @@ export function literal(value: string, opts: LiteralOptions = {}): Combinator<st
     _tag: 'literal',
     _meta: meta,
     _def: { tag: 'literal', value, caseInsensitive },
-    parse(input: string, pos: number, _ctx: ParseContext): ParseResult<string> {
+    parse(input: string, pos: number, ctx: ParseContext): ParseResult<string> {
       const end = pos + value.length
       if (end > input.length) {
-        return { ok: false, expected: [JSON.stringify(value)], span: { start: pos, end: pos } }
+        return failAt(ctx, [JSON.stringify(value)], pos)
       }
       const slice = input.slice(pos, end)
       const matched = caseInsensitive
@@ -54,11 +55,11 @@ export function literal(value: string, opts: LiteralOptions = {}): Combinator<st
       if (matched) {
         const span = { start: pos, end }
         const leaf = { _tag: 'leaf', value: slice, span }
-        if (_ctx._cstLeaves) (_ctx._cstLeaves as typeof leaf[]).push(leaf)
-        if (_ctx._cstRawChildren) (_ctx._cstRawChildren as typeof leaf[]).push(leaf)
+        if (ctx._cstLeaves) (ctx._cstLeaves as typeof leaf[]).push(leaf)
+        if (ctx._cstRawChildren) (ctx._cstRawChildren as typeof leaf[]).push(leaf)
         return { ok: true, value: slice, span }
       }
-      return { ok: false, expected: [JSON.stringify(value)], span: { start: pos, end: pos } }
+      return failAt(ctx, [JSON.stringify(value)], pos)
     },
   }
 }

@@ -68,10 +68,10 @@ describe('sepBy', () => {
 
 describe('sepBy with trivia', () => {
   it('skips trivia around separators', async () => {
-    const { trivia } = await import('../../src/index.ts')
+    const { trivia, parser } = await import('../../src/index.ts')
     const ws = trivia(regex(/\s+/))
     const words = sepBy(regex(/[a-z]+/), literal(','))
-    const r = parse(words, 'foo , bar , baz', { trivia: ws })
+    const r = parser({ trivia: ws }, words).parse('foo , bar , baz')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value).toEqual(['foo', 'bar', 'baz'])
   })

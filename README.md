@@ -16,7 +16,9 @@ Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
 
 ![CSV parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-csv.svg)
 
-Parséman compiled edges out Peggy on small and medium JSON. At 12 kB Peggy pulls ahead by ~10% — it's been doing this a while. On CSV, where the grammar is non-recursive and fully inlines, Parséman compiled is the clear winner.
+![GraphQL parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-graphql.svg)
+
+On JSON, Parséman compiled matches Peggy at small and medium sizes; Peggy pulls ahead by ~10% at 12 kB — it's been doing this a while. On CSV and GraphQL, where the grammar is non-recursive or fully inlineable, Parséman compiled is the clear winner. The `w/ .compile()` bar shows total time including the one-time compile step; the dark overlay shows parse-only time (same compiled code as the macro build).
 
 ---
 
@@ -126,8 +128,8 @@ Pure combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `one
 | `sepBy(parser, sep)` | Zero or more `parser` separated by `sep`. |
 | `transform(parser, fn)` | Map the result: `fn(value, span) → newValue`. |
 | `skip(main, skipped)` | Match `main` then `skipped`; return `main`'s value. |
-| `parser(factory)` | Mutually recursive grammar rules — no forward declarations needed. |
-| `ref<T>()` | Low-level forward declaration slot (use `parser()` in most cases). |
+| `rules(factory)` | Named grammar rules — no forward declarations needed, handles mutual recursion. |
+| `ref<T>()` | Low-level forward declaration slot (use `rules()` in most cases). |
 | `not(parser)` | Negative lookahead — succeeds (consuming nothing) when `parser` fails. |
 | `guard(predicate)` | Succeeds only when `predicate(ctx)` returns true; used for context-sensitive rules. |
 | `withCtx(extra, parser)` | Merge `extra` into the user context for the duration of `parser`. |
@@ -139,16 +141,16 @@ Pure combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `one
 
 ## Whitespace and comment skipping
 
-Pass `trivia` to `parse()` and `sequence()` will automatically skip it between terms:
+Wrap your root combinator with `parser()` to declare trivia — whitespace and comments to skip between tokens. This bakes the setting into the combinator tree so all modes (interpreter, `compile()`, macro build) behave identically:
 
 ```ts
-import { regex, sepBy, literal, parse } from 'parseman'
+import { parser, regex, trivia, sepBy, literal } from 'parseman'
 
-const ws   = regex(/\s*/)
+const ws   = trivia(regex(/\s*/))
 const word = regex(/[a-z]+/)
-const list = sepBy(word, literal(','))
+const list = parser({ trivia: ws }, sepBy(word, literal(',')))
 
-parse(list, 'foo ,  bar , baz', { trivia: ws })
+list.parse('foo ,  bar , baz')
 // { ok: true, value: ['foo', 'bar', 'baz'], ... }
 ```
 
@@ -157,15 +159,7 @@ Multiple trivia types — whitespace and comments — combine with `choice()` an
 ```ts
 const lineComment  = sequence(literal('//'), regex(/[^\n]*/))
 const blockComment = sequence(literal('/*'), scanTo(literal('*/'), []))
-const trivia       = many(choice(regex(/\s+/), lineComment, blockComment))
-```
-
-Use `grammar(opts, root)` instead of the `parse()` trivia option when you want trivia only for a subtree within a larger parse:
-
-```ts
-import { grammar } from 'parseman'
-
-const jsonValue = grammar({ trivia: ws }, choice(object, array, str, num, bool, nil))
+const ws           = trivia(many(choice(regex(/\s+/), lineComment, blockComment)))
 ```
 
 ---
@@ -198,20 +192,20 @@ const op = choice(literal('instanceof'), literal('in'), literal('if'))
 
 ---
 
-## Recursive grammars
+## Named and recursive rules
 
-Use `parser()` for mutually recursive rules. Pass a factory that receives all rule names as ready-to-use references and returns the definitions:
+Use `rules()` when your combinators need to reference each other by name. Pass a factory that receives all rule names as ready-to-use references and returns the definitions:
 
 ```ts
-import { parser, choice, sequence, literal, sepBy, transform, regex } from 'parseman'
+import { rules, parser, choice, sequence, literal, sepBy, transform, trivia, regex } from 'parseman'
 import type { Combinator } from 'parseman'
 
 type JSON = null | boolean | number | string | JSON[] | Record<string, JSON>
 
-const ws = regex(/[ \t\n\r]*/)
+const ws = trivia(regex(/[ \t\n\r]*/))
 
-const { value } = parser<{ value: Combinator<JSON> }>(g => {
-  const comma = sequence(ws, literal(','), ws)
+const { value } = rules<{ value: Combinator<JSON> }>(g => {
+  const comma = literal(',')
 
   const array = transform(
     sequence(literal('['), sepBy(g.value, comma), literal(']')),
@@ -227,26 +221,26 @@ const { value } = parser<{ value: Combinator<JSON> }>(g => {
   )
 
   return {
-    value: grammar(
-      { trivia: ws },
-      choice(object, array, jsonString, jsonNumber, jsonBool, jsonNull)
-    ) as Combinator<JSON>,
+    value: choice(object, array, jsonString, jsonNumber, jsonBool, jsonNull) as Combinator<JSON>,
   }
 })
+
+export const jsonParser = parser({ trivia: ws }, value)
+jsonParser.parse('{ "a": 1 }')
 ```
 
-`g.value` is a parser reference that works anywhere inside the factory regardless of order. Local helpers (`comma`, `pair`, `object`) that don't need to be cross-referenced can be plain `const`. Only put a rule in the returned object if other rules need to reach it as `g.xxx`.
+`g.value` is a reference that works anywhere inside the factory regardless of order. Local helpers (`comma`, `pair`, `object`) that don't need to be cross-referenced can be plain `const`. Only put a rule in the returned object if other rules need to reach it as `g.xxx`.
 
-> **Macro and recursive grammars:** The plugin fully compiles `parser()` factories, including recursive ones. It emits mutually recursive named functions (`_pf0` etc.) so the cycle is broken. Add `with { type: 'macro' }` to your import and the entire grammar — recursive rules included — is inlined at build time.
+> **Macro and `rules()`:** The plugin fully compiles `rules()` factories, including recursive ones. It emits mutually recursive named functions (`_pf0` etc.) so the cycle is broken. Add `with { type: 'macro' }` to your import and the entire grammar — recursive rules included — is inlined at build time.
 
 ### `ref<T>()` — low-level forward declaration
 
-`parser()` is the right tool for most recursive grammars. `ref<T>()` is the lower-level primitive it uses internally, exposed for cases where you need a single forward slot outside of a `parser()` call:
+`rules()` handles forward references automatically. `ref<T>()` is the lower-level primitive it uses internally, exposed for cases where you need a single forward slot outside of a `rules()` call:
 
 ```ts
 const value = ref<JSON>()
 // ... build parsers that use value ...
-value.define(grammar({ trivia: ws }, choice(object, array, str, num, bool, nil)))
+value.define(choice(object, array, str, num, bool, nil))
 ```
 
 ---

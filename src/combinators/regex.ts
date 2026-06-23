@@ -1,6 +1,7 @@
 import regexpTree from 'regexp-tree'
 import type { Combinator, ParseContext, ParseResult, ParserMeta, FirstSet } from '../types.ts'
 import { any, fromRange, union, empty } from './first-set.ts'
+import { failAt } from './probe.ts'
 
 function firstSetFromRegex(pattern: string): { firstSet: FirstSet; canMatchNewline: boolean } {
   try {
@@ -140,7 +141,7 @@ export function regex(pattern: string | RegExp, flags = ''): Combinator<string> 
       anchored.lastIndex = pos
       const m = anchored.exec(input)
       if (m === null) {
-        return { ok: false, expected: [`/${source}/`], span: { start: pos, end: pos } }
+        return failAt(ctx, [`/${source}/`], pos)
       }
       const span = { start: pos, end: pos + m[0]!.length }
       const leaf = { _tag: 'leaf', value: m[0]!, span }

@@ -25,7 +25,7 @@ const jsoncWs = trivia(
 export const jsoncValue = makeJSONParser(jsoncWs)
 
 export function parseJSONC(input: string): JSONValue {
-  const result = parse(jsoncValue, input.trim(), { trivia: jsoncWs })
+  const result = parse(jsoncValue, input.trim())
   if (!result.ok) {
     throw new SyntaxError(`JSONC parse error at offset ${result.span.start}`)
   }

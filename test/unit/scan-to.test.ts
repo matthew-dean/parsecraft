@@ -5,7 +5,7 @@
  * balanced(open, close, { skip }) — match a balanced delimiter pair.
  */
 import { describe, it, expect } from 'vitest'
-import { literal, regex, sequence, choice, transform, parse, compile, trivia } from '../../src/index.ts'
+import { literal, regex, sequence, choice, transform, parse, parser, compile, trivia } from '../../src/index.ts'
 import { scanTo, balanced } from '../../src/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@ describe('CSS-style selector scan', () => {
       sequence(selector, literal('{'), decl, literal('}')),
       ([sel,, d]) => ({ selector: sel.trim(), declarations: [d] })
     )
-    const r = parse(ruleset, '.foo { color: red; }', { trivia: ws })
+    const r = parser({ trivia: ws }, ruleset).parse('.foo { color: red; }')
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.value.selector).toBe('.foo')

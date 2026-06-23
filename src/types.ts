@@ -12,6 +12,8 @@ export type ParseOk<T> = {
   value: T
   span: Span
   trivia?: Span[]
+  /** Populated when parse() is called with { recover: true }. Lists all ParseErrors collected via recover() nodes. */
+  errors?: ParseError[]
 }
 
 export type ParseFail = {
@@ -58,6 +60,14 @@ export type ParseContext = {
   trackLines: boolean
   /** User-provided context, scoped with withCtx() and read in guard(). */
   user?: unknown
+  /** When set, recover() nodes push their ParseError here instead of (only) embedding it in the tree. */
+  _errors?: ParseError[]
+  /**
+   * When set by completionsAt(), tracks the highest-position ParseFail seen
+   * during parsing up to _probe.offset. Used to return completions at the cursor
+   * even when sepBy/many backtracked past the cursor position.
+   */
+  _probe?: { offset: number; best: ParseFail | null }
   /**
    * Framework-internal: current CSTNode rule's child collector.
    * Set by GrammarParser capital-letter parser; undefined outside CST parsing.

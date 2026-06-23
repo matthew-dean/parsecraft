@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   literal, regex, sequence, choice, many, optional, sepBy,
-  parse, scanTo, balanced, guard, withCtx,
+  parse, parser, scanTo, balanced, guard, withCtx,
 } from '../../src/index.ts'
 import { Parser } from '../../src/index.ts'
 import type { Refs } from '../../src/index.ts'
@@ -396,7 +396,7 @@ describe('Parser — rawChildren in buildNode', () => {
 
   it('children never contains trivia, rawChildren does', () => {
     // Parse with global trivia so the whitespace is auto-skipped between Ident Ident
-    const r = parse(g.rule('Selectors'), 'div p', { trivia: ws })
+    const r = parser({ trivia: ws }, g.rule('Selectors')).parse('div p')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.children.every(c => c._tag !== 'trivia')).toBe(true)
@@ -406,7 +406,7 @@ describe('Parser — rawChildren in buildNode', () => {
   })
 
   it('rawChildren has trivia interleaved between structural nodes', () => {
-    const r = parse(g.rule('Selectors'), 'foo   bar', { trivia: ws })
+    const r = parser({ trivia: ws }, g.rule('Selectors')).parse('foo   bar')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     // [Ident(foo), CSTTrivia("   "), Ident(bar)]
@@ -425,7 +425,7 @@ describe('Parser — rawChildren in buildNode', () => {
       }
     }
     const p = new PairParser()
-    const r = parse(p.rule('Pair'), 'color:red', { trivia: ws })
+    const r = parser({ trivia: ws }, p.rule('Pair')).parse('color:red')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const triviaNodes = r.value.rawChildren.filter(c => c._tag === 'trivia')

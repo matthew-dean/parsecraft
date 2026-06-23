@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  literal, regex, sequence, choice, many, oneOrMore, optional, sepBy, transform, grammar,
+  literal, regex, sequence, choice, many, oneOrMore, optional, sepBy, transform, parser,
   parse as runtimeParse, compile,
 } from '../../src/index.ts'
 import { trivia } from '../../src/combinators/map.ts'

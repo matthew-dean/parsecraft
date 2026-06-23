@@ -45,6 +45,7 @@ export function recover<T>(
         span: { start: pos, end: scanPos },
         expected: result.expected,
       }
+      ctx._errors?.push(error)
       return { ok: true, value: error, span: { start: pos, end: scanPos } }
     },
   }

@@ -12,27 +12,35 @@
  * Run:  node --import tsx bench/run.ts
  *       OR: pnpm bench
  */
-import { parseJSON, jsonValue } from '../examples/json/parser.ts'
+import { parseJSON, jsonDoc } from '../examples/json/parser.ts'
 import { parseCSV, compiledCSV, csvParser } from '../examples/csv/parser.ts'
 import { parseConfig, compiledConfig } from '../examples/toml-ish/parser.ts'
+import { parseGraphQL, graphqlDoc } from '../examples/graphql/parser.ts'
 import { compile } from '../src/index.ts'
 import { buildChevrotainJSON } from './chevrotain-json.ts'
 import { buildChevrotainCSV } from './chevrotain-csv.ts'
+import { buildChevrotainGraphQL } from './chevrotain-graphql.ts'
 import { buildParsimmonJSON } from './parsimmon-json.ts'
 import { buildParsimmonCSV } from './parsimmon-csv.ts'
+import { buildParsimmonGraphQL } from './parsimmon-graphql.ts'
 import { buildPeggyJSON } from './peggy-json.ts'
 import { buildPeggyCSV } from './peggy-csv.ts'
+import { buildPeggyGraphQL } from './peggy-graphql.ts'
 
 // ---------------------------------------------------------------------------
 // Compiled parsers (built once, reused across bench runs)
 // ---------------------------------------------------------------------------
-const compiledJSON   = compile(jsonValue)
-const chevrotainJSON = buildChevrotainJSON()
-const chevrotainCSV  = buildChevrotainCSV()
-const parsimmonJSON  = buildParsimmonJSON()
-const parsimmonCSV   = buildParsimmonCSV()
-const peggyJSON      = buildPeggyJSON()
-const peggyCSV       = buildPeggyCSV()
+const compiledJSON      = compile(jsonDoc)
+const compiledGraphQL   = compile(graphqlDoc)
+const chevrotainJSON    = buildChevrotainJSON()
+const chevrotainCSV     = buildChevrotainCSV()
+const chevrotainGQL     = buildChevrotainGraphQL()
+const parsimmonJSON     = buildParsimmonJSON()
+const parsimmonCSV      = buildParsimmonCSV()
+const parsimmonGQL      = buildParsimmonGraphQL()
+const peggyJSON         = buildPeggyJSON()
+const peggyCSV          = buildPeggyCSV()
+const peggyGQL          = buildPeggyGraphQL()
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -56,6 +64,64 @@ const LARGE_CSV = Array.from({ length: 500 }, (_, i) =>
   `user${i},${20 + (i % 50)},city${i % 20},${(i * 1.5).toFixed(2)},${i % 2 === 0 ? 'true' : 'false'}`
 ).join('\n') + '\n'
 
+// GraphQL fixtures — valid per the October 2021 spec
+const SMALL_GQL = `{ user { name email age } }`
+const MEDIUM_GQL = `
+query GetData {
+  user(id: 42) {
+    name
+    email
+    posts {
+      title
+      body
+      comments(limit: 10) {
+        author
+        text
+        createdAt
+      }
+    }
+    friends {
+      name
+      age
+    }
+  }
+  account(active: true) {
+    id
+    role
+    email
+    permissions {
+      read
+      write
+      admin
+    }
+  }
+}`.trim()
+const LARGE_GQL = Array.from({ length: 25 }, (_, i) => `
+query Op${i}($id: ID!, $flag: Boolean) {
+  node${i}(id: $id, page: ${i % 10}) {
+    field1
+    field2
+    field3
+    nested1 {
+      sub1
+      sub2
+      sub3
+      sub4
+    }
+    nested2(param: ${i * 2}, flag: $flag) {
+      a
+      b
+      c
+      d
+      e
+    }
+    nested3 {
+      deep1 { x y }
+      deep2 { p q }
+    }
+  }
+}`.trim()).join('\n')
+
 // ---------------------------------------------------------------------------
 // Benchmark runner
 // ---------------------------------------------------------------------------
@@ -78,7 +144,7 @@ console.log('\n=== JSON parsing ===')
 function jsonGroup(label: string, input: string, iters: number) {
   console.log(`\n  [${label}] ${input.length} bytes`)
   bench('Parséman (macro build)',      () => compiledJSON.parse(input, 0), iters)
-  bench('Parséman (w/ .compile())',   () => compile(jsonValue).parse(input, 0), Math.min(iters, 5_000))
+  bench('Parséman (w/ .compile())',   () => compile(jsonDoc).parse(input, 0), Math.min(iters, 5_000))
   bench('Parséman (no compile)',       () => parseJSON(input), iters)
   bench('Chevrotain',                  () => chevrotainJSON(input), iters)
   bench('Parsimmon',                   () => parsimmonJSON(input), iters)
@@ -108,5 +174,24 @@ function csvGroup(label: string, input: string, iters: number) {
 
 csvGroup('small', SMALL_CSV, 50_000)
 csvGroup('large', LARGE_CSV, 5_000)
+
+// ---------------------------------------------------------------------------
+// GraphQL benchmarks
+// ---------------------------------------------------------------------------
+console.log('\n=== GraphQL parsing ===')
+
+function gqlGroup(label: string, input: string, iters: number) {
+  console.log(`\n  [${label}] ${input.length} bytes`)
+  bench('Parséman (macro build)',    () => compiledGraphQL.parse(input), iters)
+  bench('Parséman (w/ .compile())', () => compile(graphqlDoc).parse(input), Math.min(iters, 5_000))
+  bench('Parséman (no compile)',     () => parseGraphQL(input), iters)
+  bench('Chevrotain',                () => chevrotainGQL(input), iters)
+  bench('Parsimmon',                 () => parsimmonGQL(input), iters)
+  bench('Peggy',                     () => peggyGQL(input), iters)
+}
+
+gqlGroup('small',  SMALL_GQL,  50_000)
+gqlGroup('medium', MEDIUM_GQL, 10_000)
+gqlGroup('large',  LARGE_GQL,  2_000)
 
 console.log()

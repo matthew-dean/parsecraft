@@ -13,7 +13,7 @@
  * to silently call the wrong transform — a parity failure catches that.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
-import { literal, regex, sequence, choice, optional, sepBy, transform, parser, compile, parse } from '../../src/index.ts'
+import { literal, regex, sequence, choice, optional, sepBy, transform, rules, compile, parse } from '../../src/index.ts'
 import { transformMacro } from '../../src/plugin/index.ts'
 import type { Combinator } from '../../src/types.ts'
 
@@ -35,7 +35,7 @@ const str = transform(
   ([, inner]) => ({ type: 'str', v: (inner as string).toUpperCase() }) as unknown
 )
 
-const { expr: interpExpr } = parser<{ expr: Combinator<unknown> }>(g => {
+const { expr: interpExpr } = rules<{ expr: Combinator<unknown> }>(g => {
   const comma = literal(',')
   const arr = transform(
     sequence(literal('['), optional(sepBy(g.expr, comma)), literal(']')),
@@ -57,7 +57,7 @@ type ParseFn = (input: string, pos: number, ctx: object) => { ok: boolean; value
 let macroFn: ParseFn
 
 const MACRO_CODE = `
-import { literal, regex, sequence, choice, optional, sepBy, transform, parser } from 'parseman' with { type: 'macro' }
+import { literal, regex, sequence, choice, optional, sepBy, transform, rules } from 'parseman' with { type: 'macro' }
 
 const num = transform(regex(/[0-9]+/), s => ({ type: 'num', v: Number(s) }))
 const strInner = regex(/[^"]*/)
@@ -66,7 +66,7 @@ const str = transform(
   ([, inner]) => ({ type: 'str', v: inner.toUpperCase() })
 )
 
-const { expr } = parser(g => {
+const { expr } = rules(g => {
   const comma = literal(',')
   const arr = transform(
     sequence(literal('['), optional(sepBy(g.expr, comma)), literal(']')),

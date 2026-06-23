@@ -25,7 +25,7 @@ export function sequence<T extends [Combinator<unknown>, ...Combinator<unknown>[
       for (let i = 0; i < parsers.length; i++) {
         // skip trivia between terms (not before the first)
         if (ctx.trivia && i > 0) {
-          const tr = ctx.trivia.parse(input, cur, { trivia: ctx.trivia, trackLines: ctx.trackLines, user: ctx.user })
+          const tr = ctx.trivia.parse(input, cur, { trackLines: ctx.trackLines, user: ctx.user })
           if (tr.ok) {
             if (ctx._cstRawChildren && tr.span.end > tr.span.start)
               (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span })

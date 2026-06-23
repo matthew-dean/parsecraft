@@ -105,8 +105,8 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
     } catch { return null }
   }
 
-  // parser(factory) — handled separately by evaluateParserFactory; signal null here
-  if (callee.name === 'parser') return null
+  // rules(factory) — handled separately by evaluateParserFactory; signal null here
+  if (callee.name === 'rules') return null
 
   // sepBy(item, sep) — emitSepBy traverses: item (first probe), sep, item (loop body)
   // We must push item's mfSrcs twice to stay aligned with ctx.mapFns.

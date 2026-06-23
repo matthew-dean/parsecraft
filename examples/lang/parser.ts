@@ -16,7 +16,7 @@
  */
 import {
   literal, regex, sequence, choice, many, optional, sepBy,
-  transform, parser, parse, trivia,
+  transform, rules, parser, trivia,
 } from '../../src/index.ts'
 import type { Combinator } from '../../src/index.ts'
 import type { Expr, BinaryExpr } from './ast.ts'
@@ -69,7 +69,7 @@ function leftAssoc<Op extends string>(
   )
 }
 
-export const { expr } = parser<{ expr: Combinator<Expr> }>(g => {
+export const { expr } = rules<{ expr: Combinator<Expr> }>(g => {
   // if_expr — right-binding, not left-assoc
   const ifExpr: Combinator<Expr> = transform(
     sequence(
@@ -138,6 +138,8 @@ export const { expr } = parser<{ expr: Combinator<Expr> }>(g => {
 // Public parse function
 // ---------------------------------------------------------------------------
 
+export const exprParser = parser({ trivia: ws }, expr)
+
 export function parseExpr(input: string) {
-  return parse(expr, input, { trivia: ws })
+  return exprParser.parse(input)
 }

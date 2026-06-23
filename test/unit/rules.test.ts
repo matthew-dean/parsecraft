@@ -1,14 +1,14 @@
 /**
- * Tests for parser() — the transparent recursion combinator.
+ * Tests for rules() — the transparent recursion combinator.
  *
- * parser() takes a factory that receives all rule names as parser references
+ * rules() takes a factory that receives all rule names as parser references
  * and returns a record of parser definitions. It handles forward declarations
  * (via ref() internally) so the user never has to think about recursion order.
  */
 import { describe, it, expect } from 'vitest'
 import {
-  parser, literal, regex, choice, sequence, transform, optional, sepBy, many,
-  trivia, parse,
+  rules, literal, regex, choice, sequence, transform, optional, sepBy, many,
+  parser, trivia, parse,
   type Combinator,
 } from '../../src/index.ts'
 
@@ -16,11 +16,11 @@ import {
 // Basic: single recursive rule
 // ---------------------------------------------------------------------------
 
-describe('parser() — single recursive rule', () => {
+describe('rules() — single recursive rule', () => {
   // Nested parentheses: '()', '(())', '((()))' ...
   type Nested = { type: 'empty' } | { type: 'nested'; inner: Nested }
 
-  const { nested } = parser<{ nested: Combinator<Nested> }>(g => ({
+  const { nested } = rules<{ nested: Combinator<Nested> }>(g => ({
     nested: choice(
       transform(
         sequence(literal('('), g.nested as Combinator<Nested>, literal(')')),
@@ -64,7 +64,7 @@ describe('parser() — single recursive rule', () => {
 // Mutual recursion: two parser that reference each other
 // ---------------------------------------------------------------------------
 
-describe('parser() — mutual recursion', () => {
+describe('rules() — mutual recursion', () => {
   // Simple arithmetic: expr = term ('+' term)*
   //                   term = num | '(' expr ')'
   type Expr = number | { op: '+'; left: Expr; right: Expr }
@@ -72,7 +72,7 @@ describe('parser() — mutual recursion', () => {
   const ws = trivia(regex(/\s*/))
   const num = transform(regex(/[0-9]+/), s => parseInt(s, 10))
 
-  const { expr } = parser<{ expr: Combinator<Expr>; term: Combinator<Expr> }>(g => ({
+  const { expr } = rules<{ expr: Combinator<Expr>; term: Combinator<Expr> }>(g => ({
     expr: transform(
       sequence(g.term as Combinator<Expr>, many(sequence(literal('+'), g.term as Combinator<Expr>))),
       ([first, rest]) =>
@@ -112,7 +112,7 @@ describe('parser() — mutual recursion', () => {
   })
 
   it('parses with whitespace (trivia)', () => {
-    const r = parse(expr, '1 + 2 + 3', { trivia: ws })
+    const r = parser({ trivia: ws }, expr).parse('1 + 2 + 3')
     expect(r.ok).toBe(true)
   })
 })
@@ -121,14 +121,14 @@ describe('parser() — mutual recursion', () => {
 // Local helpers inside factory — not in returned record
 // ---------------------------------------------------------------------------
 
-describe('parser() — local helpers inside factory', () => {
+describe('rules() — local helpers inside factory', () => {
   // JSON-like array: [1, 2, [3, 4]]
   type JsonArr = number | JsonArr[]
 
   const ws = trivia(regex(/\s*/))
   const num = transform(regex(/[0-9]+/), s => parseInt(s, 10))
 
-  const { value } = parser<{ value: Combinator<JsonArr> }>(g => {
+  const { value } = rules<{ value: Combinator<JsonArr> }>(g => {
     // comma and array are helpers — they don't need to be in the returned record
     // because nothing references them via g.*
     const comma = sequence(ws, literal(','), ws)
@@ -141,25 +141,27 @@ describe('parser() — local helpers inside factory', () => {
     }
   })
 
+  const valueParser = parser({ trivia: ws }, value)
+
   it('parses a number', () => {
-    const r = parse(value, '42', { trivia: ws })
+    const r = valueParser.parse('42')
     expect(r.ok && r.value).toBe(42)
   })
 
   it('parses a flat array', () => {
-    const r = parse(value, '[1, 2, 3]', { trivia: ws })
+    const r = valueParser.parse('[1, 2, 3]')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value).toEqual([1, 2, 3])
   })
 
   it('parses nested arrays', () => {
-    const r = parse(value, '[[1, 2], [3, [4]]]', { trivia: ws })
+    const r = valueParser.parse('[[1, 2], [3, [4]]]')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value).toEqual([[1, 2], [3, [4]]])
   })
 
   it('parses empty array', () => {
-    const r = parse(value, '[]', { trivia: ws })
+    const r = valueParser.parse('[]')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value).toEqual([])
   })
@@ -169,10 +171,10 @@ describe('parser() — local helpers inside factory', () => {
 // Non-recursive parser still work — no spurious ref() wrapping
 // ---------------------------------------------------------------------------
 
-describe('parser() — non-recursive parser stored directly', () => {
+describe('rules() — non-recursive parser stored directly', () => {
   // If a rule is in the returned record but never accessed via g.*,
   // it should be stored as-is (not wrapped in a ref).
-  const { word, words } = parser(g => {
+  const { word, words } = rules(g => {
     const w = regex(/[a-z]+/)
     return {
       word:  w,
