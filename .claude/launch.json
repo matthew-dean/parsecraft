@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "assets",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "4321", "assets"],
+      "port": 4321
+    }
+  ]
+}

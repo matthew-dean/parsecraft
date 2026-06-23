@@ -123,7 +123,7 @@ query Op${i}($id: ID!, $flag: Boolean) {
 }`.trim()).join('\n')
 
 // ---------------------------------------------------------------------------
-// Benchmark runner
+// Benchmark runners
 // ---------------------------------------------------------------------------
 function bench(name: string, fn: () => unknown, iterations = 10_000): number {
   for (let i = 0; i < Math.min(iterations / 10, 1000); i++) fn()
@@ -136,20 +136,51 @@ function bench(name: string, fn: () => unknown, iterations = 10_000): number {
   return ops
 }
 
+function setupBench(name: string, fn: () => unknown, iterations = 500): number {
+  for (let i = 0; i < Math.min(iterations / 10, 20); i++) fn()
+  const start = performance.now()
+  for (let i = 0; i < iterations; i++) fn()
+  const us = (performance.now() - start) / iterations * 1000
+  console.log(`  ${name.padEnd(36)} ${us.toFixed(1)}µs`)
+  return us
+}
+
 // ---------------------------------------------------------------------------
-// JSON benchmarks
+// Initialization benchmarks
 // ---------------------------------------------------------------------------
-console.log('\n=== JSON parsing ===')
+console.log('\n=== Parser initialization (one-time cost) ===')
+
+console.log('\n  [JSON]')
+setupBench('Parséman (.compile())', () => compile(jsonDoc),         500)
+setupBench('Chevrotain',             () => buildChevrotainJSON(),    50)
+setupBench('Parsimmon',              () => buildParsimmonJSON(),     20_000)
+setupBench('Peggy',                  () => buildPeggyJSON(),         20_000)
+
+console.log('\n  [CSV]')
+setupBench('Parséman (.compile())', () => compile(csvParser),       500)
+setupBench('Chevrotain',             () => buildChevrotainCSV(),     50)
+setupBench('Parsimmon',              () => buildParsimmonCSV(),      20_000)
+setupBench('Peggy',                  () => buildPeggyCSV(),          20_000)
+
+console.log('\n  [GraphQL]')
+setupBench('Parséman (.compile())', () => compile(graphqlDoc),      200)
+setupBench('Chevrotain',             () => buildChevrotainGraphQL(), 30)
+setupBench('Parsimmon',              () => buildParsimmonGraphQL(),  20_000)
+setupBench('Peggy',                  () => buildPeggyGraphQL(),      20_000)
+
+// ---------------------------------------------------------------------------
+// JSON warm-parse benchmarks
+// ---------------------------------------------------------------------------
+console.log('\n=== JSON parsing (warm) ===')
 
 function jsonGroup(label: string, input: string, iters: number) {
   console.log(`\n  [${label}] ${input.length} bytes`)
-  bench('Parséman (macro build)',      () => compiledJSON.parse(input, 0), iters)
-  bench('Parséman (w/ .compile())',   () => compile(jsonDoc).parse(input, 0), Math.min(iters, 5_000))
-  bench('Parséman (no compile)',       () => parseJSON(input), iters)
-  bench('Chevrotain',                  () => chevrotainJSON(input), iters)
-  bench('Parsimmon',                   () => parsimmonJSON(input), iters)
-  bench('Peggy',                       () => peggyJSON(input), iters)
-  bench('JSON.parse (native)',         () => JSON.parse(input), iters)
+  bench('Parséman (macro build)',  () => compiledJSON.parse(input, 0), iters)
+  bench('Parséman (no compile)',   () => parseJSON(input), iters)
+  bench('Chevrotain',              () => chevrotainJSON(input), iters)
+  bench('Parsimmon',               () => parsimmonJSON(input), iters)
+  bench('Peggy',                   () => peggyJSON(input), iters)
+  bench('JSON.parse (native)',     () => JSON.parse(input), iters)
 }
 
 jsonGroup('small',  SMALL_JSON,  50_000)
@@ -157,37 +188,35 @@ jsonGroup('medium', MEDIUM_JSON, 10_000)
 jsonGroup('large',  LARGE_JSON,  2_000)
 
 // ---------------------------------------------------------------------------
-// CSV benchmarks
+// CSV warm-parse benchmarks
 // ---------------------------------------------------------------------------
-console.log('\n=== CSV parsing ===')
+console.log('\n=== CSV parsing (warm) ===')
 
 function csvGroup(label: string, input: string, iters: number) {
   const rows = input.split('\n').length - 1
   console.log(`\n  [${label}] ${input.length} bytes, ${rows} rows`)
-  bench('Parséman (macro build)',      () => compiledCSV.parse(input), iters)
-  bench('Parséman (w/ .compile())',   () => compile(csvParser).parse(input), Math.min(iters, 5_000))
-  bench('Parséman (no compile)',       () => parseCSV(input), iters)
-  bench('Chevrotain',                  () => chevrotainCSV(input), iters)
-  bench('Parsimmon',                   () => parsimmonCSV(input), iters)
-  bench('Peggy',                       () => peggyCSV(input), iters)
+  bench('Parséman (macro build)',  () => compiledCSV.parse(input), iters)
+  bench('Parséman (no compile)',   () => parseCSV(input), iters)
+  bench('Chevrotain',              () => chevrotainCSV(input), iters)
+  bench('Parsimmon',               () => parsimmonCSV(input), iters)
+  bench('Peggy',                   () => peggyCSV(input), iters)
 }
 
 csvGroup('small', SMALL_CSV, 50_000)
 csvGroup('large', LARGE_CSV, 5_000)
 
 // ---------------------------------------------------------------------------
-// GraphQL benchmarks
+// GraphQL warm-parse benchmarks
 // ---------------------------------------------------------------------------
-console.log('\n=== GraphQL parsing ===')
+console.log('\n=== GraphQL parsing (warm) ===')
 
 function gqlGroup(label: string, input: string, iters: number) {
   console.log(`\n  [${label}] ${input.length} bytes`)
-  bench('Parséman (macro build)',    () => compiledGraphQL.parse(input), iters)
-  bench('Parséman (w/ .compile())', () => compile(graphqlDoc).parse(input), Math.min(iters, 5_000))
-  bench('Parséman (no compile)',     () => parseGraphQL(input), iters)
-  bench('Chevrotain',                () => chevrotainGQL(input), iters)
-  bench('Parsimmon',                 () => parsimmonGQL(input), iters)
-  bench('Peggy',                     () => peggyGQL(input), iters)
+  bench('Parséman (macro build)',  () => compiledGraphQL.parse(input), iters)
+  bench('Parséman (no compile)',   () => parseGraphQL(input), iters)
+  bench('Chevrotain',              () => chevrotainGQL(input), iters)
+  bench('Parsimmon',               () => parsimmonGQL(input), iters)
+  bench('Peggy',                   () => peggyGQL(input), iters)
 }
 
 gqlGroup('small',  SMALL_GQL,  50_000)
