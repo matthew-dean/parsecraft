@@ -18,7 +18,9 @@ Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
 
 ![GraphQL parsing benchmarks](https://raw.githubusercontent.com/matthew-dean/parsecraft/main/assets/bench-graphql.svg)
 
-On JSON, Parséman compiled matches Peggy at small and medium sizes; Peggy pulls ahead by ~10% at 12 kB — it's been doing this a while. On CSV and GraphQL, where the grammar is non-recursive or fully inlineable, Parséman compiled is the clear winner. The `w/ .compile()` bar shows total time including the one-time compile step; the dark overlay shows parse-only time (same compiled code as the macro build).
+Parséman has three modes — **interpreter** (zero setup, works anywhere), **macro build** (compiled by the bundler plugin at build time, zero runtime cost), and **`.compile()`** (optional runtime JIT). Most production use lands on one of the first two. The initialization section only shows parsers with a nonzero setup cost: `.compile()` costs 55–320 µs depending on grammar size; Chevrotain always costs 860–1,300 µs. Parsers not listed there start for free.
+
+On JSON, Parséman macro beats Peggy at small and medium sizes; Peggy pulls ahead by ~25% at 12 kB — it's been doing this a while. On CSV and GraphQL, where the grammar is non-recursive or fully inlineable, Parséman macro is the clear winner.
 
 ---
 
@@ -110,7 +112,7 @@ If `with { type: 'macro' }` is stripped (older bundlers, test runners), the attr
 
 ### What gets compiled
 
-Pure combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip`. Parsers using `ref()` for recursion or that close over external variables stay as-is. The plugin compiles what it can and quietly leaves the rest alone.
+Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip` — plus `rules()` factories (including mutually recursive ones) and `parser({ trivia })` wrappers. A full grammar built as a `rules()` factory, with `transform()` callbacks that construct AST nodes, compiles end to end: each rule becomes an independently-callable function and every callback is inlined with its source span. Parsers that close over external variables the evaluator can't resolve stay as-is — the plugin compiles what it can and quietly leaves the rest alone.
 
 ---
 
@@ -245,127 +247,104 @@ value.define(choice(object, array, str, num, bool, nil))
 
 ---
 
-## Class-based grammars
+## Grammars that build an AST
 
-For grammars that need automatic CST construction, incremental re-parsing, or custom AST nodes, extend `Parser`. Capital-letter rules produce named CST nodes; lowercase rules are transparent helpers whose terminals surface as leaves of the nearest enclosing rule.
+A full grammar — one that constructs typed AST nodes, supports incremental re-parsing, and handles whitespace-sensitive syntax — is just a `rules()` factory where each node-rule is a `transform()` that builds its node. The `transform` callback receives the parsed parts **and the node's source span**, and returns whatever node object you want. Because that's all ordinary combinator code, the macro compiles the entire grammar — node construction included — to flat, allocation-light JS.
 
 ```ts
-import { Parser, parse, regex, literal, choice, sequence, many, sepBy } from 'parseman'
-import type { Refs } from 'parseman'
+import { rules, parser, regex, literal, choice, sequence, many, transform, trivia } from 'parseman'
+import type { Combinator } from 'parseman'
 
-class ExprParser extends Parser {
-  ws     = regex(/\s*/)
-  digits = regex(/[0-9]+/)
-  ident  = regex(/[a-zA-Z_]\w*/)
+// Your own node type — anything that satisfies NodeLike (see below) participates
+// in incremental re-parsing. `span` comes free as the transform's 2nd argument.
+type Node = { _tag: 'node'; type: string; span: { start: number; end: number }; state: unknown; children: Node[]; [k: string]: unknown }
+const node = (type: string, span: { start: number; end: number }, children: Node[], fields: Record<string, unknown> = {}): Node =>
+  ({ _tag: 'node', type, span, state: null, children, ...fields })
 
-  // Plain initializer when no cross-reference needed
-  Str    = sequence(literal('"'), regex(/[^"]*/), literal('"'))
+const ws = trivia(regex(/\s+/))
 
-  // Thunk form for forward / mutual references
-  Num    = (g: Refs<ExprParser>) => g.digits
-  Id     = (g: Refs<ExprParser>) => g.ident
-  Add    = (g: Refs<ExprParser>) => sequence(g.Num, many(sequence(literal('+'), g.Num)))
-  Expr   = (g: Refs<ExprParser>) => choice(g.Add, g.Num, g.Id)
-}
+export const { Expr, Num } = rules<{ Expr: Combinator<Node>; Num: Combinator<Node> }>(g => {
+  const num = parser({ trivia: ws }, transform(
+    regex(/[0-9]+/),
+    (text, span) => node('Num', span, [], { value: Number(text) })
+  ))
+  const expr = parser({ trivia: ws }, transform(
+    sequence(g.Num, many(sequence(literal('+'), g.Num))),
+    ([first, rest], span) => node('Expr', span, [first, ...rest.map(([, n]) => n)])
+  ))
+  return { Expr: expr, Num: num }
+})
 
-const expr = new ExprParser()
-const r = parse(expr.rule('Expr'), '1+2+3')
-// r.value is a CSTNode { _tag: 'node', type: 'Expr', span, children, savedContext }
+Expr.parse('1 + 2 + 3', 0, { trackLines: false })
+// value is a Node { _tag: 'node', type: 'Expr', span, children: [Num, Num, Num] }
 ```
 
-### Inheritance
+Each rule returned from the factory is independently callable — `Expr`, `Num` above are the **rule registry**, which is exactly what incremental re-parsing needs. Wrap each node-rule in `parser({ trivia })` so whitespace-skipping is baked in regardless of which rule you start parsing from (the macro compiles the wrapper away).
 
-Override any rule by redeclaring it in a subclass — subclass initializers run after the parent's, so the override wins automatically:
+### Spans and field positions
+
+The second argument to every `transform` callback is the matched span, so each node records its own source range for free. When you need the position of an *individual field* (a language server highlighting one token), wrap that field in a tiny span-capturing transform so the value carries its span:
 
 ```ts
-class JSXParser extends ExprParser {
-  // replace just the ident rule; everything else stays
-  ident = regex(/[a-zA-Z_$][\w$]*/)
-}
+const spanned = <T>(c: Combinator<T>) => transform(c, (value, span) => ({ value, span }))
+
+const decl = transform(
+  sequence(spanned(ident), literal(':'), spanned(value)),
+  ([name, , val], span) => node('Declaration', span, [], { name: name.value, nameSpan: name.span, value: val.value })
+)
 ```
 
-### Custom AST nodes (`buildNode`)
+### Whitespace-sensitive syntax via span gaps
 
-Override `buildNode` to return your own node type instead of the default `CSTNode`:
-
-```ts
-import type { CSTLeaf, CSTError, CSTRawChild, Span } from 'parseman'
-
-type MyNode = { _tag: 'node'; type: string; span: Span; savedContext: unknown; children: MyNode[]; text: string }
-
-class MyParser extends Parser<MyNode> {
-  // ... rules ...
-
-  protected buildNode(
-    type: string,
-    span: Span,
-    children: ReadonlyArray<MyNode | CSTLeaf | CSTError>,
-    savedContext: unknown,
-    rawChildren: ReadonlyArray<CSTRawChild>,
-  ): MyNode {
-    return { _tag: 'node', type, span, savedContext, children: children as MyNode[], text: '...' }
-  }
-}
-```
-
-`children` contains the structural children (sub-nodes and leaf tokens, no trivia). `rawChildren` contains everything in parse order including trivia tokens — useful for whitespace-sensitive grammars.
-
-### Whitespace-sensitive rules with `rawChildren`
-
-When whitespace is semantically meaningful (e.g. CSS where `div p` is a descendant combinator but `div+p` is adjacent), inspect `rawChildren` inside `buildNode`:
+When whitespace is semantically meaningful (CSS: `div p` is a descendant combinator, `div.p` is one compound selector), you don't need a trivia array — **infer it from the gaps between child spans**. With trivia skipping on, two adjacent matches that were separated by whitespace leave a gap: `prev.span.end < next.span.start`. That gap *is* the descendant combinator:
 
 ```ts
-import type { CSTTrivia } from 'parseman'
+const compound = parser({ trivia: ws }, transform(/* ... */))
 
-class CssParser extends Parser<SelectorNode> {
-  ident     = regex(/[a-zA-Z-]+/)
-  Selector  = (g: Refs<CssParser>) => sequence(g.ident, g.ident)
-
-  protected buildNode(type, span, children, savedContext, rawChildren) {
-    if (type === 'Selector') {
-      // rawChildren: [Ident("div"), CSTTrivia(" "), Ident("p")]
-      const hasDescendant = rawChildren.some(c => c._tag === 'trivia')
+const complex = parser({ trivia: ws }, transform(
+  sequence(compound, many(compound)),
+  ([first, rest], span) => {
+    const parts: Node[] = [first]
+    let prev = first
+    for (const next of rest) {
+      // a gap between two compounds means a descendant combinator stood there
+      if (prev.span.end < next.span.start) parts.push(node('Combinator', { start: prev.span.end, end: next.span.start }, [], { kind: ' ' }))
+      parts.push(next)
+      prev = next
     }
-    return ...
+    return node('Complex', span, parts)
   }
-}
-
-// Trivia is set on parse() — the whitespace skip happens globally
-parse(css.rule('Stylesheet'), src, { trivia: many(choice(regex(/\s+/), comment)) })
+))
 ```
-
-`CSTTrivia` nodes only appear in `rawChildren`, never in `children`. Zero-length trivia matches (e.g. `\s*` at a non-whitespace position) are not emitted.
 
 ### Incremental re-parsing
 
-`Parser.parse(ruleName, input)` returns a `ParseDoc` — an object holding the tree, any parse errors, and an `edit()` method for incremental re-parsing. The parser itself stays stateless; all the incremental state lives in the doc.
+`makeFunctionalDoc(registry, rootRule, input, opts?)` wraps a parse in a document that re-parses incrementally on edits. The `registry` is the object `rules()` returns (rule name → parser fn); the parser functions stay stateless, all incremental state lives in the doc.
 
 ```ts
-const css = new CSSParser()
+import { makeFunctionalDoc } from 'parseman'
 
-const doc = css.parse('Stylesheet', src)
-doc.tree    // CSTNode root, or null on failure
+const registry = { Expr, Num }              // straight from rules()
+let doc = makeFunctionalDoc(registry, 'Expr', src)
+doc.tree    // your Node root, or null on failure
 doc.errors  // ParseFail[], empty on success
 doc.input   // the source string
 
-// subsequent edits return a new doc — old one is untouched
-// edit(from, to, replacement): select from→to in the old text, replace with replacement
-const doc2 = doc.edit(changeStart, changeStart + changeLength, newText)
+// edit(from, to, replacement) — two byte offsets into the OLD text + the
+// replacement. "Select from→to, type replacement" — the three things every
+// editor knows on each keystroke. Returns a new doc; the old one is untouched.
+doc = doc.edit(changeStart, changeStart + changeLength, newText)
 ```
 
-`edit(from, to, replacement)` takes two byte offsets into the **old** text (`from` and `to`), plus the replacement string. Think of it as "highlight characters from→to, type replacement" — the same three things any editor already knows on every keystroke. Internally it runs `old.slice(0, from) + replacement + old.slice(to)`. It finds the smallest node containing the change, re-parses just that subtree using its saved context, and stops early when the new span end matches the expected position. O(changed region) amortized for typical edits. Nodes unaffected by the edit are structurally shared between old and new docs.
+`edit()` finds the smallest node containing the change, re-parses just that rule from its start offset using the node's saved `state`, and grafts the result back in when the new span end lands where the edit's delta predicts. Nodes unaffected by the edit are shared by reference between old and new docs. For class-instance ASTs that can't be shallow-spread, pass `opts.rebuild(node, children)` to control how a parent is reconstructed when a child is replaced.
 
-Context-sensitive grammars work correctly: each CST node records a `ctx.user` snapshot at parse time (`savedContext`), so re-parsing resumes from the exact same state. Solid enough for a language server.
-
-**In an IDE extension**, hold one parser instance per language, one `ParseDoc` per open document. On each keystroke your editor gives you the changed range as byte offsets — pass those straight to `edit()`:
+**In an IDE extension**, keep one registry per language and one doc per open document. Each keystroke gives you the changed range as byte offsets — pass them straight to `edit()`:
 
 ```ts
-// VS Code example
-const parser = new CSSParser()
-const docs = new Map<string, ParseDoc<CSTNode>>()
+const docs = new Map<string, ReturnType<typeof makeFunctionalDoc<Node>>>()
 
-vscode.workspace.onDidOpenTextDocument(document => {
-  docs.set(document.uri.toString(), parser.parse('Stylesheet', document.getText()))
+vscode.workspace.onDidOpenTextDocument(d => {
+  docs.set(d.uri.toString(), makeFunctionalDoc(registry, 'Stylesheet', d.getText()))
 })
 
 vscode.workspace.onDidChangeTextDocument(event => {
@@ -375,7 +354,23 @@ vscode.workspace.onDidChangeTextDocument(event => {
     doc = doc.edit(change.rangeOffset, change.rangeOffset + change.rangeLength, change.text)
   }
   docs.set(uri, doc)
-  // walk doc.tree to emit diagnostics, folding ranges, semantic tokens, etc.
+  // walk doc.tree for diagnostics, folding ranges, semantic tokens, etc.
+})
+```
+
+### Inheritance — by composition
+
+Share rules across grammar variants by composition: factor common rules into helpers, and let each variant swap the ones it needs. Because every rule is a plain value, a variant is just different pieces passed into the same `rules()` shape — and it all stays macro-compilable.
+
+```ts
+// shared building blocks
+const makeIdent = () => regex(/[a-zA-Z_]\w*/)
+
+export const { Expr } = rules<{ Expr: Combinator<Node> }>(g => {
+  const ident = makeIdent()                       // base
+  // a JSX variant would use regex(/[a-zA-Z_$][\w$]*/) here instead
+  /* ...rules referencing ident... */
+  return { Expr: /* ... */ }
 })
 ```
 
@@ -383,28 +378,26 @@ vscode.workspace.onDidChangeTextDocument(event => {
 
 ## Context-sensitive parsing
 
-`withCtx` and `guard` implement context-sensitive rules without mutating shared state.
+`withCtx` and `guard` implement context-sensitive rules without mutating shared state, and they compose into `rules()` like any other combinator.
 
-`withCtx(extra, parser)` merges `extra` into the user context for the duration of `parser`. `guard(predicate)` succeeds only when `predicate(ctx)` returns true, effectively gating a rule behind runtime context.
+`withCtx(extra, parser)` merges `extra` into the user context for the duration of `parser`. `guard(predicate)` succeeds only when `predicate(ctx)` returns true, gating a rule behind runtime context.
 
 ```ts
-import { withCtx, guard, many, sequence, choice, literal, regex } from 'parseman'
+import { rules, withCtx, guard, many, sequence, choice, literal, regex, trivia, parser } from 'parseman'
+import type { Combinator } from 'parseman'
 
-class LangParser extends Parser {
-  ws = regex(/\s*/)
+const ws = trivia(regex(/\s*/))
 
-  Expr    = regex(/[a-z]+/)
-  Return  = (g: Refs<LangParser>) => sequence(
-    guard((ctx: { inFn?: boolean }) => ctx.inFn === true),
-    literal('return'),
-  )
-  Stmt    = (g: Refs<LangParser>) => choice(g.Return, g.Expr)
-  Body    = (g: Refs<LangParser>) => withCtx({ inFn: true }, many(sequence(g.Stmt, g.ws)))
-  Program = (g: Refs<LangParser>) => many(g.Body)
-}
+export const { Program } = rules<{ Program: Combinator<unknown> }>(g => {
+  const expr   = regex(/[a-z]+/)
+  const ret    = sequence(guard((ctx: { inFn?: boolean }) => ctx.inFn === true), literal('return'))
+  const stmt   = choice(ret, expr)
+  const body   = withCtx({ inFn: true }, many(sequence(stmt, ws)))
+  return { Program: parser({ trivia: ws }, many(body)) }
+})
 ```
 
-`Return` is only reachable inside a `Body` because `guard` rejects it when `inFn` is not set. `ParseDoc.edit()` replays the correct context on incremental edits because `savedContext` captures the `inFn: true` snapshot at the node that originally set it.
+`return` is only reachable inside a body because `guard` rejects it when `inFn` is not set. Incremental `edit()` replays the correct context because each node records the `ctx.state` snapshot (`node.state`) active when it was parsed.
 
 ---
 
@@ -475,17 +468,34 @@ type Span = {
 }
 ```
 
-### CST types
+### Node and document types
+
+Any AST your `transform` callbacks produce participates in incremental re-parsing as long as it satisfies `NodeLike` — that's the whole contract:
 
 ```ts
-type CSTNode  = { _tag: 'node';  type: string; span: Span; children: CSTChild[]; savedContext: unknown }
-type CSTLeaf  = { _tag: 'leaf';  value: string; span: Span }
-type CSTError = { _tag: 'error'; type: string; span: Span; expected: string[]; children: CSTChild[]; savedContext: unknown }
-type CSTTrivia = { _tag: 'trivia'; value: string; span: Span }  // only in rawChildren
+type NodeLike = {
+  readonly _tag: 'node'
+  readonly type: string          // the rule name — used as the registry key on re-parse
+  readonly span: Span
+  readonly state: unknown        // ctx.state snapshot at parse time; replayed on edit
+  readonly children: ReadonlyArray<{ readonly _tag: string }>
+}
 
-type CSTChild    = CSTNode | CSTLeaf | CSTError
-type CSTRawChild = CSTNode | CSTLeaf | CSTTrivia | CSTError
+// makeFunctionalDoc<N>(registry, rootRule, input, opts?) → FunctionalDoc<N>
+type Registry<N>    = Record<string, (input: string, pos: number, ctx: ParseContext) => ParseResult<N>>
+interface FunctionalDoc<N extends NodeLike> {
+  readonly tree: N | null
+  readonly errors: ParseFail[]
+  readonly input: string
+  edit(from: number, to: number, replacement: string): FunctionalDoc<N>
+}
+type FunctionalDocOptions<N> = {
+  state?: unknown                                                  // initial ctx.state for the root parse
+  rebuild?: (node: N, children: ReadonlyArray<unknown>) => N       // override for class-instance ASTs
+}
 ```
+
+`children` only needs items carrying a `_tag` so traversal can tell sub-nodes (`_tag: 'node'`) from anything else. The `type` string must match the rule name in the registry so `edit()` can re-parse the right rule.
 
 ---
 

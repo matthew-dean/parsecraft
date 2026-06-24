@@ -1,4 +1,4 @@
-import type { ParseContext, ParseFail } from '../types.ts'
+import type { Combinator, ParseContext, ParseFail } from '../types.ts'
 import type { Parser, RuleKeys } from './grammar.ts'
 import type { CSTLeaf, CSTError, NodeLike } from './types.ts'
 
@@ -21,6 +21,8 @@ export interface ParseDoc<N extends NodeLike = NodeLike> {
   readonly tree: N | null
   readonly errors: ParseFail[]
   readonly input: string
+  /** Offset reached by the top-level rule. < input.length means input was left unconsumed. */
+  readonly consumedEnd: number
   /**
    * Incrementally re-parse after a text change.
    *
@@ -99,26 +101,33 @@ function replaceAtPath<N extends NodeLike>(
 class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
   private readonly _parser: Parser<N>
   private readonly _ruleName: string
+  private readonly _trivia: Combinator<unknown> | undefined
+  private readonly _captureTrivia: boolean | undefined
   readonly tree: N | null
   readonly errors: ParseFail[]
   readonly input: string
+  /** Offset reached by the top-level rule. < input.length means input was left unconsumed. */
+  readonly consumedEnd: number
 
-  constructor(parser: Parser<N>, ruleName: string, tree: N | null, errors: ParseFail[], input: string) {
-    this._parser   = parser
-    this._ruleName = ruleName
-    this.tree      = tree
-    this.errors    = errors
-    this.input     = input
+  constructor(parser: Parser<N>, ruleName: string, tree: N | null, errors: ParseFail[], input: string, trivia?: Combinator<unknown>, captureTrivia?: boolean, consumedEnd = 0) {
+    this._parser        = parser
+    this._ruleName      = ruleName
+    this._trivia        = trivia
+    this._captureTrivia = captureTrivia
+    this.tree           = tree
+    this.errors         = errors
+    this.input          = input
+    this.consumedEnd    = consumedEnd
   }
 
   edit(from: number, to: number, replacement: string): ParseDoc<N> {
     const newInput = this.input.slice(0, from) + replacement + this.input.slice(to)
 
-    if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput)
+    if (!this.tree) return makeParseDoc(this._parser, this._ruleName, newInput, this._trivia, this._captureTrivia)
 
     const delta = replacement.length - (to - from)
     const found = findContaining(this.tree, from)
-    if (!found) return makeParseDoc(this._parser, this._ruleName, newInput)
+    if (!found) return makeParseDoc(this._parser, this._ruleName, newInput, this._trivia, this._captureTrivia)
 
     const ancestors = ancestorsAt(this.tree, found.path)
     const candidates: FoundNode[] = [found]
@@ -132,16 +141,16 @@ class ParseDocImpl<N extends NodeLike> implements ParseDoc<N> {
       const { node, path } = candidate
       const expectedEnd = node.span.end + delta
       const parser = this._parser.rule(node.type as RuleKeys<typeof this._parser>)
-      const ctx: ParseContext = { trackLines: false, user: node.savedContext }
+      const ctx: ParseContext = { trackLines: false, state: node.state, ...(this._trivia !== undefined ? { trivia: this._trivia } : {}), ...(this._captureTrivia ? { captureTrivia: true } : {}) }
       const r = parser.parse(newInput, node.span.start, ctx)
       if (!r.ok) continue
       if (r.span.end === expectedEnd) {
         const newTree = replaceAtPath(this._parser, this.tree!, path, r.value)
-        return new ParseDocImpl(this._parser, this._ruleName, newTree, [], newInput)
+        return new ParseDocImpl(this._parser, this._ruleName, newTree, [], newInput, this._trivia, this._captureTrivia)
       }
     }
 
-    return makeParseDoc(this._parser, this._ruleName, newInput)
+    return makeParseDoc(this._parser, this._ruleName, newInput, this._trivia, this._captureTrivia)
   }
 }
 
@@ -153,11 +162,17 @@ export function makeParseDoc<N extends NodeLike>(
   parser: Parser<N>,
   ruleName: string,
   input: string,
+  trivia?: Combinator<unknown>,
+  captureTrivia?: boolean
 ): ParseDoc<N> {
-  const ctx: ParseContext = { trackLines: false }
+  const ctx: ParseContext = {
+    trackLines: false,
+    ...(trivia !== undefined ? { trivia } : {}),
+    ...(captureTrivia ? { captureTrivia: true } : {})
+  }
   const r = parser.rule(ruleName as RuleKeys<typeof parser>).parse(input, 0, ctx)
   if (r.ok) {
-    return new ParseDocImpl(parser, ruleName, r.value, [], input)
+    return new ParseDocImpl(parser, ruleName, r.value, [], input, trivia, captureTrivia, r.span.end)
   }
-  return new ParseDocImpl(parser, ruleName, null, [{ ok: false, expected: r.expected, span: r.span }], input)
+  return new ParseDocImpl(parser, ruleName, null, [{ ok: false, expected: r.expected, span: r.span }], input, trivia, captureTrivia, r.span.start)
 }

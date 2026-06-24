@@ -1,4 +1,49 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
+import { consumeTrivia, scanTrivia } from './trivia-skip.ts'
+
+/**
+ * Parse one repetition item at `cur`, first skipping (and, in capture mode,
+ * recording) any leading trivia — so a repeating combinator consumes the trivia
+ * between items uniformly, the way advancing the index always should. Trivia is
+ * committed *before* the item so rawChildren order stays [item, trivia, item];
+ * if the item then fails or makes no progress the trivia is rolled back and the
+ * loop stops (the trivia is trailing and belongs to the enclosing context).
+ *
+ * Returns the item value + end position, the underlying failure (so oneOrMore
+ * can propagate a first-item failure), or 'stop'.
+ */
+function repItem<T>(
+  parser: Combinator<T>,
+  input: string,
+  cur: number,
+  ctx: ParseContext
+): { value: T; end: number } | { fail: ParseResult<T> } | 'stop' {
+  const raw = ctx._cstRawChildren as unknown[] | undefined
+  const mark = raw ? raw.length : 0
+  let pos = cur
+  if (ctx.trivia) {
+    const scan = scanTrivia(input, cur, ctx)
+    scan.commit()
+    pos = scan.end
+  }
+  // Nothing but trivia left: don't speculatively parse an item at EOF (it would
+  // fail and could trigger an item's recover()/error side-effects). The trivia
+  // is trailing — roll it back for the enclosing context and stop.
+  if (pos >= input.length) {
+    if (raw) raw.length = mark
+    return 'stop'
+  }
+  const result = parser.parse(input, pos, ctx)
+  if (!result.ok) {
+    if (raw) raw.length = mark
+    return { fail: result }
+  }
+  if (result.span.end === pos) {
+    if (raw) raw.length = mark
+    return 'stop'
+  }
+  return { value: result.value, end: result.span.end }
+}
 
 export function many<T>(parser: Combinator<T>): Combinator<T[]> {
   const meta: ParserMeta = {
@@ -15,22 +60,10 @@ export function many<T>(parser: Combinator<T>): Combinator<T[]> {
       const values: T[] = []
       let cur = pos
       while (cur < input.length) {
-        let result = parser.parse(input, cur, ctx)
-        // If item fails and trivia is active, skip trivia then retry.
-        // Try item first to avoid trivia consuming content the item parser needs
-        // (e.g. when many() is used inside the trivia combinator itself).
-        if (!result.ok && ctx.trivia) {
-          const tc = { trackLines: ctx.trackLines, user: ctx.user }
-          const tr = ctx.trivia.parse(input, cur, tc)
-          if (tr.ok && tr.span.end > cur) {
-            if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span })
-            result = parser.parse(input, tr.span.end, ctx)
-          }
-        }
-        if (!result.ok) break
-        if (result.span.end === cur) break
-        values.push(result.value)
-        cur = result.span.end
+        const item = repItem(parser, input, cur, ctx)
+        if (item === 'stop' || 'fail' in item) break
+        values.push(item.value)
+        cur = item.end
       }
       return { ok: true, value: values, span: { start: pos, end: cur } }
     },
@@ -49,25 +82,17 @@ export function oneOrMore<T>(parser: Combinator<T>): Combinator<T[]> {
     _meta: meta,
     _def: { tag: 'oneOrMore', parser: parser as Combinator<unknown>, min: 1 },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T[]> {
+      // First item is mandatory (parsed at pos directly — leading trivia is the
+      // enclosing context's responsibility); subsequent items skip leading trivia.
       const first = parser.parse(input, pos, ctx)
       if (!first.ok) return first
       const values: T[] = [first.value]
       let cur = first.span.end
       while (cur < input.length) {
-        let nextPos = cur
-        let result = parser.parse(input, cur, ctx)
-        if (!result.ok && ctx.trivia) {
-          const tc = { trackLines: ctx.trackLines, user: ctx.user }
-          const tr = ctx.trivia.parse(input, cur, tc)
-          if (tr.ok && tr.span.end > cur) {
-            if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span })
-            result = parser.parse(input, tr.span.end, ctx)
-          }
-        }
-        if (!result.ok) break
-        if (result.span.end === cur) break
-        values.push(result.value)
-        cur = result.span.end
+        const item = repItem(parser, input, cur, ctx)
+        if (item === 'stop' || 'fail' in item) break
+        values.push(item.value)
+        cur = item.end
       }
       return { ok: true, value: values, span: { start: pos, end: cur } }
     },
@@ -110,12 +135,10 @@ export function sepBy<T, S>(parser: Combinator<T>, separator: Combinator<S>): Co
       const values: T[] = [first.value]
       let cur = first.span.end
       while (cur < input.length) {
-        let sepPos = cur
-        if (ctx.trivia) { const triviaCtx = { trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, sepPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); sepPos = tr.span.end } }
+        const sepPos = ctx.trivia ? consumeTrivia(input, cur, ctx) : cur
         const sep = separator.parse(input, sepPos, ctx)
         if (!sep.ok) break
-        let nextPos = sep.span.end
-        if (ctx.trivia) { const triviaCtx = { trackLines: ctx.trackLines, user: ctx.user }; const tr = ctx.trivia.parse(input, nextPos, triviaCtx); if (tr.ok) { if (ctx._cstRawChildren && tr.span.end > tr.span.start) (ctx._cstRawChildren as unknown[]).push({ _tag: 'trivia', value: input.slice(tr.span.start, tr.span.end), span: tr.span }); nextPos = tr.span.end } }
+        const nextPos = ctx.trivia ? consumeTrivia(input, sep.span.end, ctx) : sep.span.end
         const next = parser.parse(input, nextPos, ctx)
         if (!next.ok) break
         values.push(next.value)

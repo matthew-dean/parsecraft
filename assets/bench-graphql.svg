@@ -14,7 +14,7 @@
 <text x="177" y="51" font-size="11.5" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Chevrotain</text>
 <text x="700" y="31" font-size="10.5" fill="#8c959f" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">µs — shorter is faster</text>
 <text x="20" y="86" font-size="10.5" font-weight="600" fill="#8c959f" letter-spacing="0.06em" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">GRAPHQL PARSING</text>
-<text x="20" y="101" font-size="12.5" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">initialization (one-time)</text>
+<text x="20" y="101" font-size="12.5" fill="#57606a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">initialization (one-time; others: no setup cost)</text>
 <text x="230" y="136" text-anchor="end" font-size="12" fill="#24292f" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">Parséman (.compile())</text>
 <rect x="238" y="121" width="386" height="18" rx="3" fill="#f0f0f5"/>
 <rect x="238" y="121" width="93.3" height="18" rx="3" fill="#9B8FEF"/>

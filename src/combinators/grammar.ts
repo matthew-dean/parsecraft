@@ -15,6 +15,8 @@ export type ParseOptions = {
 
 export type ParserOptions = ParseOptions & {
   trivia?: Combinator<unknown>
+  /** Record consumed trivia as CSTTrivia tokens in rawChildren. Default: skip. */
+  captureTrivia?: boolean
 }
 
 export interface ParsemanParser<T> extends Combinator<T> {
@@ -34,9 +36,11 @@ export function parser<T>(opts: ParserOptions, root: Combinator<T>): ParsemanPar
     },
     parse(input: string, pos?: number, _ctx?: ParseContext): ParseResult<T> {
       const trackLines = opts.trackLines ?? false
-      const ctx: ParseContext = opts.trivia !== undefined
-        ? { trivia: opts.trivia, trackLines }
-        : { trackLines }
+      const ctx: ParseContext = {
+        trackLines,
+        ...(opts.trivia !== undefined ? { trivia: opts.trivia } : {}),
+        ...(opts.captureTrivia ? { captureTrivia: true } : {}),
+      }
       const result = root.parse(input, pos ?? 0, ctx)
       if (trackLines) {
         const idx = buildLineIndex(input)

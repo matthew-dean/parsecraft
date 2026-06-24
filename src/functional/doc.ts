@@ -1,0 +1,188 @@
+/**
+ * Functional incremental document — a class-free counterpart to ParseDoc.
+ *
+ * The class-based Parser bakes a rule registry (method name → combinator) and
+ * a `rebuild()` hook into the grammar object. A *functional* grammar produces
+ * the same two ingredients without a class:
+ *
+ *   - the registry is the object returned by `rules()` (rule name → parser fn),
+ *     which the macro compiles to a map of independently-callable functions;
+ *   - `rebuild` is supplied by the caller (or defaults to a shallow spread),
+ *     since functional nodes are whatever the `transform()` callbacks produced.
+ *
+ * Given those, incremental re-parsing is identical in spirit to the class path:
+ * locate the smallest node containing the edit, re-parse that single rule from
+ * its start offset, and graft the result back into the tree if its end lands
+ * where the edit's delta predicts.
+ *
+ * This module has no dependency on the `Parser` class — it is what lets the
+ * class be removed once grammars move to the functional shape.
+ */
+import type { ParseContext, ParseFail, ParseResult } from '../types.ts'
+import type { NodeLike, CSTLeaf, CSTError } from '../cst/types.ts'
+
+/** A single compiled (or interpreted) rule: parse from `pos`, producing node `N`. */
+export type RuleFn<N> = (input: string, pos: number, ctx: ParseContext) => ParseResult<N>
+
+/** Rule name → parser function. This is exactly the shape `rules()` returns. */
+export type Registry<N> = Record<string, RuleFn<N>>
+
+export type FunctionalDocOptions<N extends NodeLike> = {
+  /** Initial grammar state threaded into ctx.state for the root parse. */
+  state?: unknown
+  /**
+   * Reconstruct a parent node with one child replaced (used when grafting a
+   * re-parsed subtree into its ancestors). Defaults to a shallow spread, which
+   * works for plain-object nodes; class-instance ASTs should supply their own.
+   */
+  rebuild?: (node: N, children: ReadonlyArray<N | CSTLeaf | CSTError>) => N
+}
+
+export interface FunctionalDoc<N extends NodeLike> {
+  readonly tree: N | null
+  readonly errors: ParseFail[]
+  readonly input: string
+  /**
+   * Incrementally re-parse after a text change. `from`/`to` are byte offsets in
+   * the OLD input; `replacement` fills that range. Mirrors editor change events
+   * (see ParseDoc.edit for the mapping).
+   */
+  edit(from: number, to: number, replacement: string): FunctionalDoc<N>
+}
+
+// ---------------------------------------------------------------------------
+// Tree navigation (generic over NodeLike — no class, no CST assumptions)
+// ---------------------------------------------------------------------------
+
+type FoundNode<N extends NodeLike> = { node: N; path: number[] }
+
+function isNode(x: unknown): x is NodeLike {
+  return typeof x === 'object' && x !== null && (x as { _tag?: string })._tag === 'node'
+}
+
+function findContaining<N extends NodeLike>(node: N, pos: number, path: number[] = []): FoundNode<N> | null {
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i]!
+    if (!isNode(child)) continue
+    if (child.span.start <= pos && pos < child.span.end) {
+      const inner = findContaining(child as N, pos, [...path, i])
+      return inner ?? { node: child as N, path: [...path, i] }
+    }
+  }
+  return null
+}
+
+function ancestorsAt<N extends NodeLike>(root: N, path: number[]): N[] {
+  const ancestors: N[] = [root]
+  let cur: N = root
+  for (const idx of path.slice(0, -1)) {
+    const child = cur.children[idx]
+    if (!child || !isNode(child)) break
+    ancestors.push(child as N)
+    cur = child as N
+  }
+  return ancestors
+}
+
+function replaceAtPath<N extends NodeLike>(
+  rebuild: NonNullable<FunctionalDocOptions<N>['rebuild']>,
+  root: N,
+  path: number[],
+  newNode: N,
+): N {
+  if (path.length === 0) return newNode
+  const [idx, ...rest] = path as [number, ...number[]]
+  const newChildren = [...root.children] as Array<N | CSTLeaf | CSTError>
+  newChildren[idx] = rest.length === 0
+    ? newNode
+    : replaceAtPath(rebuild, root.children[idx] as N, rest, newNode)
+  return rebuild(root, newChildren)
+}
+
+function defaultRebuild<N extends NodeLike>(node: N, children: ReadonlyArray<N | CSTLeaf | CSTError>): N {
+  return { ...node, children } as N
+}
+
+// ---------------------------------------------------------------------------
+// Document
+// ---------------------------------------------------------------------------
+
+class FunctionalDocImpl<N extends NodeLike> implements FunctionalDoc<N> {
+  private readonly _registry: Registry<N>
+  private readonly _rootRule: string
+  private readonly _opts: FunctionalDocOptions<N>
+  readonly tree: N | null
+  readonly errors: ParseFail[]
+  readonly input: string
+
+  constructor(
+    registry: Registry<N>,
+    rootRule: string,
+    opts: FunctionalDocOptions<N>,
+    tree: N | null,
+    errors: ParseFail[],
+    input: string,
+  ) {
+    this._registry = registry
+    this._rootRule = rootRule
+    this._opts = opts
+    this.tree = tree
+    this.errors = errors
+    this.input = input
+  }
+
+  edit(from: number, to: number, replacement: string): FunctionalDoc<N> {
+    const newInput = this.input.slice(0, from) + replacement + this.input.slice(to)
+    const reparse = () => makeFunctionalDoc(this._registry, this._rootRule, newInput, this._opts)
+
+    if (!this.tree) return reparse()
+
+    const delta = replacement.length - (to - from)
+    const found = findContaining(this.tree, from)
+    if (!found) return reparse()
+
+    // Try the innermost containing rule first, then widen outward.
+    const ancestors = ancestorsAt(this.tree, found.path)
+    const candidates: FoundNode<N>[] = [found]
+    const pathCopy = [...found.path]
+    for (let i = ancestors.length - 2; i >= 0; i--) {
+      pathCopy.pop()
+      candidates.push({ node: ancestors[i + 1]!, path: [...pathCopy] })
+    }
+
+    const rebuild = this._opts.rebuild ?? defaultRebuild
+    for (const { node, path } of candidates) {
+      const ruleFn = this._registry[node.type]
+      if (!ruleFn) continue
+      const ctx: ParseContext = { trackLines: false, state: node.state }
+      const r = ruleFn(newInput, node.span.start, ctx)
+      if (!r.ok) continue
+      if (r.span.end === node.span.end + delta) {
+        const newTree = replaceAtPath(rebuild, this.tree, path, r.value)
+        return new FunctionalDocImpl(this._registry, this._rootRule, this._opts, newTree, [], newInput)
+      }
+    }
+
+    return reparse()
+  }
+}
+
+/**
+ * Parse `input` from `rootRule` and wrap the result in a FunctionalDoc that can
+ * be incrementally re-parsed via `.edit()`.
+ */
+export function makeFunctionalDoc<N extends NodeLike>(
+  registry: Registry<N>,
+  rootRule: string,
+  input: string,
+  opts: FunctionalDocOptions<N> = {},
+): FunctionalDoc<N> {
+  const ruleFn = registry[rootRule]
+  if (!ruleFn) throw new Error(`No rule '${rootRule}' in registry`)
+  const ctx: ParseContext = { trackLines: false, state: opts.state }
+  const r: ParseResult<N> = ruleFn(input, 0, ctx)
+  if (r.ok) {
+    return new FunctionalDocImpl(registry, rootRule, opts, r.value, [], input)
+  }
+  return new FunctionalDocImpl(registry, rootRule, opts, null, [{ ok: false, expected: r.expected, span: r.span }], input)
+}

@@ -4,6 +4,8 @@ export { literal } from './combinators/literal.ts'
 export type { LiteralOptions } from './combinators/literal.ts'
 
 export { regex } from './combinators/regex.ts'
+export { keywords } from './combinators/keywords.ts'
+export type { KeywordsOptions } from './combinators/keywords.ts'
 
 export { sequence } from './combinators/sequence.ts'
 export { choice } from './combinators/choice.ts'
@@ -33,3 +35,8 @@ export { Parser } from './cst/grammar.ts'
 export type { Refs, RuleKeys } from './cst/grammar.ts'
 export type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTChild, CSTRawChild, NodeLike } from './cst/types.ts'
 export type { ParseDoc } from './cst/incremental.ts'
+
+export { makeFunctionalDoc } from './functional/doc.ts'
+export type { FunctionalDoc, FunctionalDocOptions, Registry, RuleFn } from './functional/doc.ts'
+export { buildTriviaIndex } from './cst/trivia-index.ts'
+export type { TriviaIndex, TriviaToken } from './cst/trivia-index.ts'

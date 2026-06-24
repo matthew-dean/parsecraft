@@ -32,20 +32,21 @@ export type ParserDef =
   | { tag: 'literal';   value: string; caseInsensitive: boolean }
   | { tag: 'regex';     source: string; flags: string; optimizedSource: string }
   | { tag: 'sequence';  parsers: Combinator<unknown>[] }
-  | { tag: 'choice';    parsers: Combinator<unknown>[]; gates: (((user: unknown) => boolean) | null)[]; disjoint: boolean; strategy: ChoiceStrategy; autoNot: (AutoNotCheck[] | null)[] }
+  | { tag: 'choice';    parsers: Combinator<unknown>[]; gates: (((state: unknown) => boolean) | null)[]; disjoint: boolean; strategy: ChoiceStrategy; autoNot: (AutoNotCheck[] | null)[] }
   | { tag: 'many';      parser: Combinator<unknown>; min: 0 }
   | { tag: 'oneOrMore'; parser: Combinator<unknown>; min: 1 }
   | { tag: 'optional';  parser: Combinator<unknown> }
   | { tag: 'sepBy';     parser: Combinator<unknown>; separator: Combinator<unknown> }
-  | { tag: 'transform'; parser: Combinator<unknown>; fn: (v: unknown, span: { start: number; end: number }) => unknown }
+  | { tag: 'transform'; parser: Combinator<unknown>; fn: (v: unknown, span: { start: number; end: number }) => unknown; fnSrc?: string }
   | { tag: 'skip';      main: Combinator<unknown>; skipped: Combinator<unknown> }
   | { tag: 'trivia';    parser: Combinator<unknown> }
   | { tag: 'grammar';   parser: Combinator<unknown>; triviaParser: Combinator<unknown> | undefined; trackLines: boolean }
   | { tag: 'lazy';     thunk: () => Combinator<unknown> }
-  | { tag: 'guard';    predicate: (user: unknown) => boolean }
+  | { tag: 'guard';    predicate: (state: unknown) => boolean }
   | { tag: 'withCtx';  extra: unknown; parser: Combinator<unknown> }
   | { tag: 'recover';  parser: Combinator<unknown>; sentinel: Combinator<unknown> }
   | { tag: 'scanTo';   sentinel: Combinator<unknown>; skip: Combinator<unknown>[]; orEOF: boolean }
+  | { tag: 'keywords'; words: readonly string[]; caseInsensitive: boolean; boundary: string | undefined }
   | { tag: 'unknown' }
 
 export type Combinator<T> = {
@@ -57,9 +58,16 @@ export type Combinator<T> = {
 
 export type ParseContext = {
   trivia?: Combinator<unknown>
+  /**
+   * When true (and a CST node is collecting children), trivia consumed between
+   * terms is recorded into _cstRawChildren as separate CSTTrivia tokens — one
+   * per maximal sub-match of the trivia parser (e.g. a whitespace run or a
+   * comment). When false/unset, trivia is skipped silently. Default: skip.
+   */
+  captureTrivia?: boolean
   trackLines: boolean
-  /** User-provided context, scoped with withCtx() and read in guard(). */
-  user?: unknown
+  /** Grammar-author-provided state, scoped with withCtx() and read in guard(). */
+  state?: unknown
   /** When set, recover() nodes push their ParseError here instead of (only) embedding it in the tree. */
   _errors?: ParseError[]
   /**
@@ -147,9 +155,9 @@ export type AutoNotCheck =
  * it is evaluated (cheaply, without parsing) before the arm is attempted.
  * If the gate returns false the arm is skipped entirely.
  *
- * Usage: choice({ gate: u => (u as Ctx).inFn, parser: returnKw }, ident)
+ * Usage: choice({ gate: s => (s as Ctx).inFn, parser: returnKw }, ident)
  */
 export type GatedArm<T = unknown> = {
-  gate: (user: unknown) => boolean
+  gate: (state: unknown) => boolean
   parser: Combinator<T>
 }

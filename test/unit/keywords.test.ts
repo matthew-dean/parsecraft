@@ -1,0 +1,35 @@
+import { describe, it, expect } from 'vitest'
+import { keywords, parse } from '../../src/index.ts'
+
+describe('keywords', () => {
+  it('matches any keyword in the set', () => {
+    const kw = keywords(['red', 'green', 'blue'])
+    expect(parse(kw, 'red')).toMatchObject({ ok: true, value: 'red' })
+    expect(parse(kw, 'green')).toMatchObject({ ok: true, value: 'green' })
+    expect(parse(kw, 'blue').ok).toBe(true)
+  })
+
+  it('fails on a non-keyword', () => {
+    expect(parse(keywords(['red', 'green']), 'purple').ok).toBe(false)
+  })
+
+  it('prefers the longest match (longest-first)', () => {
+    const kw = keywords(['bord', 'border'])
+    const r = parse(kw, 'border')
+    expect(r.ok && r.value).toBe('border')
+  })
+
+  it('enforces a trailing word boundary', () => {
+    const kw = keywords(['red'], { boundary: 'A-Za-z0-9_-' })
+    // 'red' inside 'redish' must not match (no boundary after).
+    expect(parse(kw, 'redish').ok).toBe(false)
+    expect(parse(kw, 'red').ok).toBe(true)
+    expect(parse(kw, 'red ').ok).toBe(true)
+  })
+
+  it('matches case-insensitively when requested', () => {
+    const kw = keywords(['red'], { caseInsensitive: true })
+    expect(parse(kw, 'RED').ok).toBe(true)
+    expect(parse(kw, 'Red').ok).toBe(true)
+  })
+})

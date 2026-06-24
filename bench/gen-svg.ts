@@ -159,7 +159,7 @@ function buildSvg(chart: Chart): string {
 const jsonChart: Chart = {
   title: 'JSON PARSING',
   initGroup: {
-    title: 'initialization (one-time)',
+    title: 'initialization (one-time; others: no setup cost)',
     bars: [
       { label: 'Parséman (.compile())', us: 54.3, color: C.compile },
       { label: 'Chevrotain',             us: 865,  color: C.chevrotain },
@@ -207,7 +207,7 @@ const jsonChart: Chart = {
 const csvChart: Chart = {
   title: 'CSV PARSING',
   initGroup: {
-    title: 'initialization (one-time)',
+    title: 'initialization (one-time; others: no setup cost)',
     bars: [
       { label: 'Parséman (.compile())', us: 52.6, color: C.compile },
       { label: 'Chevrotain',             us: 864,  color: C.chevrotain },
@@ -242,7 +242,7 @@ const csvChart: Chart = {
 const gqlChart: Chart = {
   title: 'GRAPHQL PARSING',
   initGroup: {
-    title: 'initialization (one-time)',
+    title: 'initialization (one-time; others: no setup cost)',
     bars: [
       { label: 'Parséman (.compile())', us: 317.6,  color: C.compile },
       { label: 'Chevrotain',             us: 1313.7, color: C.chevrotain },

@@ -147,7 +147,9 @@ export function transformMacro(
         const parser = evaluateExpr(init, scope, code, mapFnSources)
         if (parser === null) { anyUnresolved = true; continue }
 
-        const compiled = compile(parser, mapFnSources.length ? mapFnSources : undefined)
+        // Sources are carried on each transform's def (set by the evaluator), so
+        // codegen derives them in traversal order — no positional array needed.
+        const compiled = compile(parser)
         if (compiled.inlineExpression === null) { anyUnresolved = true; continue }
 
         replacements.push({
@@ -179,7 +181,6 @@ export function transformMacro(
         const pattern = d.id as unknown as { properties: unknown[] }
         const lines: string[] = []
         let allOk = true
-        let mfOffset = 0  // mapFnSources is shared; each rule uses a sub-slice
 
         for (const prop of pattern.properties) {
           const p = prop as { type: string; key: { type: string; name?: string; value?: unknown }; value: { type: string; name?: string } }
@@ -195,7 +196,9 @@ export function transformMacro(
           const rule = ruleMap.get(ruleKey)
           if (!rule) { allOk = false; break }
 
-          const compiled = compile(rule, mapFnSources.length ? mapFnSources : undefined)
+          // Each rule derives its own transform sources from def.fnSrc in
+          // codegen order, so a single rule referencing others compiles cleanly.
+          const compiled = compile(rule)
           if (compiled.inlineExpression === null) { allOk = false; break }
 
           lines.push(`${exportPrefix}${kind} ${localName} = ${compiled.inlineExpression}`)

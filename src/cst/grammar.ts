@@ -49,7 +49,7 @@ export type Refs<T> = {
  *       Expr = (g: Refs<this>) => choice(g.Atom, sequence(g.Expr, literal('+')))
  *
  * Convention:
- *   Capital letter → CSTNode-producing rule (span + savedContext + children)
+ *   Capital letter → CSTNode-producing rule (span + state + children)
  *   lowercase      → transparent helper (terminals bubble up as CSTLeaf in the
  *                    nearest enclosing capital rule)
  *
@@ -67,6 +67,34 @@ export type Refs<T> = {
  */
 export class Parser<N extends NodeLike = CSTNode> {
   private _built = false
+
+  /** Set in a subclass to enable automatic trivia skipping between sequence terms. */
+  protected _trivia?: Combinator<unknown>
+
+  /**
+   * Set in a subclass to make the rule name optional in `parse()`.
+   * When defined, `parse(input)` is equivalent to `parse(defaultRule, input)`.
+   */
+  protected _defaultRule?: RuleKeys<this>
+
+  /**
+   * Set `true` in a subclass to record trivia (whitespace/comments) consumed
+   * between terms into each node's rawChildren as separate CSTTrivia tokens.
+   * Requires `_trivia` to be set. Default: trivia is skipped without recording.
+   */
+  protected _captureTrivia?: boolean
+
+  /**
+   * Optional map of public entry-point aliases → actual rule names. Lets callers
+   * `parse('value', src)` when the grammar's rule is `ValueList`, removing
+   * per-adapter name-translation tables.
+   */
+  protected _aliases?: Record<string, string>
+
+  /** Resolve an alias to its target rule name (identity if not aliased). */
+  protected _resolveRule(name: string): string {
+    return this._aliases?.[name] ?? name
+  }
 
   private _build() {
     if (this._built) return
@@ -124,10 +152,10 @@ export class Parser<N extends NodeLike = CSTNode> {
     type: string,
     span: Span,
     children: ReadonlyArray<N | CSTLeaf | CSTError>,
-    savedContext: unknown,
+    state: unknown,
     _rawChildren: ReadonlyArray<CSTRawChild>,
   ): N {
-    return { _tag: 'node', type, span, children: children as CSTNode['children'], savedContext } as unknown as N
+    return { _tag: 'node', type, span, children: children as CSTNode['children'], state } as unknown as N
   }
 
   /** Wrap an inner combinator so it produces a CSTNode on each match. */
@@ -143,8 +171,8 @@ export class Parser<N extends NodeLike = CSTNode> {
       _meta: meta,
       _def:  { tag: 'unknown' },
       parse(input: string, pos: number, ctx: ParseContext): ParseResult<N> {
-        const savedContext = ctx.user !== undefined
-          ? Object.assign({}, ctx.user as Record<string, unknown>)
+        const state = ctx.state !== undefined
+          ? Object.assign({}, ctx.state as Record<string, unknown>)
           : undefined
 
         const children: (N | CSTLeaf | CSTError)[] = []
@@ -159,9 +187,16 @@ export class Parser<N extends NodeLike = CSTNode> {
         const r = inner.parse(input, pos, innerCtx)
         if (!r.ok) return r
 
-        const node = self.buildNode(type, r.span, children, savedContext, rawChildren)
+        const node = self.buildNode(type, r.span, children, state, rawChildren)
+        // A custom buildNode may collapse a rule to a non-node value (e.g. a
+        // bare string). Keep the raw value in `children` (the AST view) but
+        // record it in `rawChildren` as a spanned leaf so the parent can still
+        // recover this child's source span (for fieldSpans/valueSpans).
+        const isNodeLike = typeof node === 'object' && node !== null && (node as { _tag?: string })._tag === 'node'
         if (ctx._cstChildren)    (ctx._cstChildren as unknown[]).push(node)
-        if (ctx._cstRawChildren) (ctx._cstRawChildren as unknown[]).push(node)
+        if (ctx._cstRawChildren) (ctx._cstRawChildren as unknown[]).push(
+          isNodeLike ? node : { _tag: 'leaf', value: typeof node === 'string' ? node : '', span: r.span }
+        )
         return { ok: true, value: node, span: r.span }
       },
     }
@@ -169,7 +204,7 @@ export class Parser<N extends NodeLike = CSTNode> {
 
   /** Reconstruct a node with a new children array (used by IncrementalParser). */
   rebuild(node: N, newChildren: ReadonlyArray<N | CSTLeaf | CSTError>): N {
-    return this.buildNode(node.type, node.span, newChildren, node.savedContext, [])
+    return this.buildNode(node.type, node.span, newChildren, node.state, [])
   }
 
   /**
@@ -183,9 +218,26 @@ export class Parser<N extends NodeLike = CSTNode> {
    *
    *   // In an editor — just keep calling edit():
    *   const doc2 = doc.edit(newSrc, changeStart, changeEnd)
+   *
+   * If the grammar defines `_defaultRule`, the rule name may be omitted:
+   *   const doc = css.parse(src)  // uses _defaultRule
    */
-  parse(ruleName: RuleKeys<this>, input: string): ParseDoc<N> {
-    return makeParseDoc(this, ruleName as string, input)
+  parse(ruleName: RuleKeys<this>, input: string): ParseDoc<N>
+  parse(input: string): ParseDoc<N>
+  parse(ruleNameOrInput: RuleKeys<this> | string, input?: string): ParseDoc<N> {
+    let ruleName: string
+    let src: string
+    if (input === undefined) {
+      if (this._defaultRule === undefined) {
+        throw new Error('parse(input) requires a _defaultRule to be set on the grammar')
+      }
+      ruleName = this._defaultRule as string
+      src = ruleNameOrInput as string
+    } else {
+      ruleName = ruleNameOrInput as string
+      src = input
+    }
+    return makeParseDoc(this, this._resolveRule(ruleName), src, this._trivia, this._captureTrivia)
   }
 
   /**
@@ -194,7 +246,8 @@ export class Parser<N extends NodeLike = CSTNode> {
    */
   rule(name: RuleKeys<this>): Combinator<N> {
     this._build()
-    const p = (this as unknown as Record<string, unknown>)[name as string]
+    const resolved = this._resolveRule(name as string)
+    const p = (this as unknown as Record<string, unknown>)[resolved]
     if (!p) throw new Error(`No rule '${String(name)}' on this parser`)
     return p as Combinator<N>
   }

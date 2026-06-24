@@ -28,7 +28,7 @@ describe('guard()', () => {
     expect(parse(p, '').ok).toBe(false)
   })
 
-  it('reads ctx.user via predicate', () => {
+  it('reads ctx.state via predicate', () => {
     const p = guard(u => (u as { flag: boolean })?.flag === true)
     // Without context: fails
     expect(parse(p, '').ok).toBe(false)

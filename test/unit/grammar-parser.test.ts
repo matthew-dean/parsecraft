@@ -96,49 +96,49 @@ describe('Parser — basic CST', () => {
 })
 
 // ---------------------------------------------------------------------------
-// savedContext
+// state
 // ---------------------------------------------------------------------------
-describe('Parser — savedContext', () => {
-  it('savedContext is undefined when no user context is set', () => {
+describe('Parser — state', () => {
+  it('state is undefined when no user context is set', () => {
     const g = expr()
     const r = parse(g.rule('Number'), '1')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value.savedContext).toBeUndefined()
+    expect(r.value.state).toBeUndefined()
   })
 
-  it('savedContext records ctx.user at parse entry', () => {
+  it('state records ctx.state at parse entry', () => {
     const g = expr()
     const p = withCtx({ mode: 'strict' }, g.rule('Number'))
     const r = parse(p, '99')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect((r.value as CSTNode).savedContext).toEqual({ mode: 'strict' })
+    expect((r.value as CSTNode).state).toEqual({ mode: 'strict' })
   })
 
-  it('savedContext is a shallow clone — original mutations do not propagate', () => {
+  it('state is a shallow clone — original mutations do not propagate', () => {
     const g = expr()
     const userCtx = { count: 0 }
     const p = withCtx(userCtx, g.rule('Number'))
     const r = parse(p, '7')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const saved = (r.value as CSTNode).savedContext as { count: number }
+    const saved = (r.value as CSTNode).state as { count: number }
     expect(saved.count).toBe(0)
     userCtx.count = 999
     expect(saved.count).toBe(0)
   })
 
-  it('nested rules each record their own savedContext', () => {
+  it('nested rules each record their own state', () => {
     const g = expr()
     const p = withCtx({ phase: 'test' }, g.rule('Add'))
     const r = parse(p, '1+2')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const addCtx = r.value.savedContext as { phase: string }
+    const addCtx = r.value.state as { phase: string }
     expect(addCtx.phase).toBe('test')
     const numChildren = r.value.children.filter(c => c._tag === 'node') as CSTNode[]
-    expect(numChildren[0]!.savedContext).toEqual({ phase: 'test' })
+    expect(numChildren[0]!.state).toEqual({ phase: 'test' })
   })
 })
 
@@ -219,7 +219,7 @@ describe('Parser — context-sensitive rules', () => {
     expect(hasReturn).toBe(true)
   })
 
-  it('savedContext on nested Return records inFn:true', () => {
+  it('state on nested Return records inFn:true', () => {
     const g = new LangGrammar()
     const r = parse(g.rule('Body'), 'return;')
     expect(r.ok).toBe(true)
@@ -227,7 +227,7 @@ describe('Parser — context-sensitive rules', () => {
     const stmts = r.value.children.filter(c => c._tag === 'node' && (c as CSTNode).type === 'Stmt') as CSTNode[]
     const ret = stmts.flatMap(s => s.children).find(c => c._tag === 'node' && (c as CSTNode).type === 'Return') as CSTNode | undefined
     expect(ret).toBeDefined()
-    expect((ret!.savedContext as { inFn?: boolean })?.inFn).toBe(true)
+    expect((ret!.state as { inFn?: boolean })?.inFn).toBe(true)
   })
 })
 
@@ -239,7 +239,7 @@ describe('Parser — custom AST via buildNode()', () => {
     _tag: 'node'
     type: string
     span: Span
-    savedContext: unknown
+    state: unknown
     children: ReadonlyArray<{ _tag: string }>
     text: string
   }
@@ -249,9 +249,9 @@ describe('Parser — custom AST via buildNode()', () => {
       type: string,
       span: Span,
       children: ReadonlyArray<MyNode | CSTLeaf | CSTError>,
-      savedContext: unknown,
+      state: unknown,
     ): MyNode {
-      return { _tag: 'node', type, span, children, savedContext, text: `[${type}:${span.start}-${span.end}]` }
+      return { _tag: 'node', type, span, children, state, text: `[${type}:${span.start}-${span.end}]` }
     }
 
     digits = regex(/[0-9]+/)
@@ -376,7 +376,7 @@ describe('Parser — CSS-style scanner', () => {
 // rawChildren — trivia visibility in buildNode
 // ---------------------------------------------------------------------------
 describe('Parser — rawChildren in buildNode', () => {
-  type RichNode = { _tag: 'node'; type: string; span: Span; savedContext: unknown; children: CSTChild[]; rawChildren: CSTRawChild[] }
+  type RichNode = { _tag: 'node'; type: string; span: Span; state: unknown; children: CSTChild[]; rawChildren: CSTRawChild[] }
   type CSTChild = CSTNode | CSTLeaf | CSTError
 
   class SelectorParser extends Parser<RichNode> {
@@ -386,8 +386,8 @@ describe('Parser — rawChildren in buildNode', () => {
     Ident     = (g: Refs<SelectorParser>) => g.ident
     Selectors = (g: Refs<SelectorParser>) => sequence(g.Ident, g.Ident)
 
-    protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, savedContext: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
-      return { _tag: 'node', type, span, savedContext, children: children as CSTChild[], rawChildren: [...rawChildren] }
+    protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
+      return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren] }
     }
   }
 
@@ -396,7 +396,7 @@ describe('Parser — rawChildren in buildNode', () => {
 
   it('children never contains trivia, rawChildren does', () => {
     // Parse with global trivia so the whitespace is auto-skipped between Ident Ident
-    const r = parser({ trivia: ws }, g.rule('Selectors')).parse('div p')
+    const r = parser({ trivia: ws, captureTrivia: true }, g.rule('Selectors')).parse('div p')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.children.every(c => c._tag !== 'trivia')).toBe(true)
@@ -406,7 +406,7 @@ describe('Parser — rawChildren in buildNode', () => {
   })
 
   it('rawChildren has trivia interleaved between structural nodes', () => {
-    const r = parser({ trivia: ws }, g.rule('Selectors')).parse('foo   bar')
+    const r = parser({ trivia: ws, captureTrivia: true }, g.rule('Selectors')).parse('foo   bar')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     // [Ident(foo), CSTTrivia("   "), Ident(bar)]
@@ -420,8 +420,8 @@ describe('Parser — rawChildren in buildNode', () => {
     class PairParser extends Parser<RichNode> {
       ident = regex(/[a-zA-Z]+/)
       Pair  = (g: Refs<PairParser>) => sequence(g.ident, literal(':'), g.ident)
-      protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, savedContext: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
-        return { _tag: 'node', type, span, savedContext, children: children as CSTChild[], rawChildren: [...rawChildren] }
+      protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
+        return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren] }
       }
     }
     const p = new PairParser()

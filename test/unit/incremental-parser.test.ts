@@ -166,7 +166,7 @@ describe('ParseDoc — context-sensitive', () => {
     expect(doc.tree).not.toBeNull()
   })
 
-  it('savedContext on Stmt node records inFn:true', () => {
+  it('state on Stmt node records inFn:true', () => {
     const doc = lang.parse('Program', 'return ')
     expect(doc.tree).not.toBeNull()
 
@@ -183,7 +183,7 @@ describe('ParseDoc — context-sensitive', () => {
 
     const stmt = findNode(doc.tree!, 'Stmt')
     expect(stmt).toBeDefined()
-    expect((stmt!.savedContext as { inFn?: boolean } | undefined)?.inFn).toBe(true)
+    expect((stmt!.state as { inFn?: boolean } | undefined)?.inFn).toBe(true)
   })
 })
 

@@ -21,6 +21,14 @@ type Ctx = {
   regexMap: Map<string, string>
   /** Map functions that need to be captured at compile time */
   mapFns: Array<(v: unknown, span: { start: number; end: number }) => unknown>
+  /**
+   * Source text of each map function, captured in lockstep with `mapFns`
+   * (parallel array). Populated from `def.fnSrc` when present — lets the macro
+   * inline transform callbacks in codegen-traversal order without a fragile
+   * pre-accumulated positional array. `null` entries mean the source was not
+   * available (interpreter/compile() path with no macro source).
+   */
+  mapFnSrcs: Array<string | null>
   /** Runtime parser fallbacks (for unknown/_def-less parsers) */
   runtimeParsers: Array<Combinator<unknown>>
   /** Whether any case-insensitive lit was emitted (needs collator) */
@@ -407,7 +415,7 @@ function emitFirstMatch(
     if (gate) {
       const gateIdx = ctx.mapFns.length
       ctx.mapFns.push(gate as (v: unknown, span: unknown) => unknown)
-      gateCond = `_mf[${gateIdx}](_ctx.user)`
+      gateCond = `_mf[${gateIdx}](_ctx.state)`
     }
     const skipCond = gateCond ? `!${resV}?.ok && ${gateCond}` : `!${resV}?.ok`
 
@@ -453,6 +461,7 @@ function emitTransformChain(p: Combinator<unknown>, baseValue: string, endV: str
     const innerR = emitTransformChain(def.parser, baseValue, endV, startPos, ctx)
     const fnIdx = ctx.mapFns.length
     ctx.mapFns.push(def.fn)
+    ctx.mapFnSrcs.push(def.fnSrc ?? null)
     const vv = v(ctx)
     return {
       stmts: [...innerR.stmts, `${ind(ctx)}const ${vv} = _mf[${fnIdx}](${innerR.valueVar}, { start: ${startPos}, end: ${endV} })`],
@@ -780,6 +789,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       const inner = emit(def.parser, ctx, pos)
       const fnIdx = ctx.mapFns.length
       ctx.mapFns.push(def.fn)
+      ctx.mapFnSrcs.push(def.fnSrc ?? null)
       const mv = v(ctx, '_mapped')
       return {
         stmts: [
@@ -828,7 +838,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       const vv = v(ctx)
       return {
         stmts: [
-          `${ind(ctx)}if (!_mf[${fnIdx}](_ctx.user)) ${failStmt({ ...ctx, indent: 0 }, '"gate"', pos).trim()}`,
+          `${ind(ctx)}if (!_mf[${fnIdx}](_ctx.state)) ${failStmt({ ...ctx, indent: 0 }, '"gate"', pos).trim()}`,
           `${ind(ctx)}const ${vv} = null`,
         ],
         valueVar: vv,
@@ -869,7 +879,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       const ev = v(ctx, '_wce')
       return {
         stmts: [
-          `${ind(ctx)}const ${rv} = ${fn}(input, ${pos}, { ..._ctx, user: _mf[${evIdx}]() })`,
+          `${ind(ctx)}const ${rv} = ${fn}(input, ${pos}, { ..._ctx, state: _mf[${evIdx}]() })`,
           `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"withCtx"', pos).trim()}`,
           `${ind(ctx)}const ${vv} = ${rv}.value`,
           `${ind(ctx)}const ${ev} = ${rv}.span.end`,
@@ -912,6 +922,7 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
     regexDecls: [],
     regexMap: new Map(),
     mapFns: [],
+    mapFnSrcs: [],
     runtimeParsers: [],
     needsCollator: false,
     namedParsers: new Map(),
@@ -952,11 +963,20 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
 
   const defaultCtx: ParseContext = { trackLines: false }
 
+  // Prefer per-def sources captured in codegen-traversal order (set by the
+  // macro via def.fnSrc). Fall back to a caller-provided positional array.
+  // The derived array is only usable when every traversed transform carried a
+  // source — otherwise we can't inline the closures.
+  const derivedSrcs = ctx.mapFnSrcs.length === ctx.mapFns.length && ctx.mapFnSrcs.every((s): s is string => s !== null)
+    ? ctx.mapFnSrcs as string[]
+    : undefined
+  const effectiveSources = mapFnSources ?? derivedSrcs
+
   // Build an inline expression when there are no runtime fallbacks, and either
   // no map-function closures or their source text has been provided for injection.
-  const mfCovered = ctx.mapFns.length === 0 || (mapFnSources !== undefined && mapFnSources.length === ctx.mapFns.length)
+  const mfCovered = ctx.mapFns.length === 0 || (effectiveSources !== undefined && effectiveSources.length === ctx.mapFns.length)
   const canInline = ctx.runtimeParsers.length === 0 && mfCovered
-  const inlineExpression: string | null = canInline ? buildInlineExpression(ctx, r, collatorDecl, mapFnSources) : null
+  const inlineExpression: string | null = canInline ? buildInlineExpression(ctx, r, collatorDecl, effectiveSources) : null
 
   return {
     source,

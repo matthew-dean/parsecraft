@@ -42,17 +42,34 @@ export function scanTo(
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<string> {
       let cur = pos
 
+      // Sentinel checks and skip scans must not emit CST children of their own —
+      // scanTo represents the whole scanned span as one leaf. Probe them with a
+      // collector-free context so their internal literal()/regex() don't push.
+      const probeCtx: ParseContext = { trackLines: ctx.trackLines, state: ctx.state }
+
+      // Record the scanned text as a CSTLeaf so buildNode-driven grammars can
+      // see it in children/rawChildren (it would otherwise be lost — only the
+      // returned value carries it). Skipped when no collector is active.
+      const emit = (end: number) => {
+        if (end > pos && (ctx._cstLeaves || ctx._cstRawChildren)) {
+          const leaf = { _tag: 'leaf', value: input.slice(pos, end), span: { start: pos, end } }
+          if (ctx._cstLeaves) (ctx._cstLeaves as unknown[]).push(leaf)
+          if (ctx._cstRawChildren) (ctx._cstRawChildren as unknown[]).push(leaf)
+        }
+      }
+
       while (cur < input.length) {
         // Check sentinel — if it matches here, stop and return consumed text.
-        const s = sentinel.parse(input, cur, ctx)
+        const s = sentinel.parse(input, cur, probeCtx)
         if (s.ok) {
+          emit(cur)
           return { ok: true, value: input.slice(pos, cur), span: { start: pos, end: cur } }
         }
 
         // Try each skipper in order; take first that advances.
         let advanced = false
         for (const skipper of skip) {
-          const r = skipper.parse(input, cur, ctx)
+          const r = skipper.parse(input, cur, probeCtx)
           if (r.ok && r.span.end > cur) {
             cur = r.span.end
             advanced = true
@@ -66,6 +83,7 @@ export function scanTo(
 
       // Reached EOF without finding sentinel.
       if (orEOF) {
+        emit(cur)
         return { ok: true, value: input.slice(pos, cur), span: { start: pos, end: cur } }
       }
       const sentDef = sentinel._def

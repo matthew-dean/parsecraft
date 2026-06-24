@@ -99,14 +99,36 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
     if (!parserArg || !fnArg || parserArg.type === 'SpreadElement' || fnArg.type === 'SpreadElement') return null
     const inner = anyValue(parserArg as Expression, scope, code, mfs)
     if (!isCombinator(inner)) return null
-    mfs.push(code.slice((fnArg as Expression).start, (fnArg as Expression).end))
+    const fnSrc = code.slice((fnArg as Expression).start, (fnArg as Expression).end)
+    mfs.push(fnSrc)
     try {
-      return parseman.transform(inner, (v: unknown) => v)
+      const combi = parseman.transform(inner, (v: unknown) => v)
+      // Carry the callback source on the def so codegen can pull it in traversal
+      // order (order-independent across rules that share sub-combinators).
+      if (combi._def.tag === 'transform') combi._def.fnSrc = fnSrc
+      return combi
     } catch { return null }
   }
 
   // rules(factory) — handled separately by evaluateParserFactory; signal null here
   if (callee.name === 'rules') return null
+
+  // parser(opts, root) — bakes trivia/trackLines into a `grammar` combinator so
+  // the compiled output skips whitespace between sequence terms identically to
+  // the interpreter. opts.trivia is itself a combinator; evaluate it with a
+  // throwaway mfs accumulator since the trivia parser is emitted out-of-band
+  // (ensureTriviaFn) and its sources are pulled via def.fnSrc, not positionally.
+  if (callee.name === 'parser') {
+    const [optsArg, rootArg] = node.arguments
+    if (!optsArg || !rootArg || optsArg.type === 'SpreadElement' || rootArg.type === 'SpreadElement') return null
+    const opts = anyValue(optsArg as Expression, scope, code, [])
+    if (!opts || typeof opts !== 'object') return null
+    const root = anyValue(rootArg as Expression, scope, code, mfs)
+    if (!isCombinator(root)) return null
+    try {
+      return parseman.parser(opts as parseman.ParserOptions, root)
+    } catch { return null }
+  }
 
   // sepBy(item, sep) — emitSepBy traverses: item (first probe), sep, item (loop body)
   // We must push item's mfSrcs twice to stay aligned with ctx.mapFns.

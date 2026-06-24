@@ -14,7 +14,7 @@ export function choice<T extends [Combinator<unknown> | GatedArm<unknown>, ...(C
 ): Combinator<UnionArms<T>> {
   // Unwrap gated arms into (parser, gate) pairs
   const parsers = args.map(a => ('gate' in a ? a.parser : a)) as Combinator<unknown>[]
-  const gates   = args.map(a => ('gate' in a ? a.gate   : null)) as (((user: unknown) => boolean) | null)[]
+  const gates   = args.map(a => ('gate' in a ? a.gate   : null)) as (((state: unknown) => boolean) | null)[]
 
   const hasGates = gates.some(g => g !== null)
 
@@ -118,7 +118,7 @@ export function choice<T extends [Combinator<unknown> | GatedArm<unknown>, ...(C
 
       // ── firstMatch (+ gated arms): try each arm in order, skipping gated-off arms ──
       for (let i = 0; i < parsers.length; i++) {
-        if (gates[i] && !gates[i]!(ctx.user)) continue   // gate blocks this arm
+        if (gates[i] && !gates[i]!(ctx.state)) continue   // gate blocks this arm
         const result = parsers[i]!.parse(input, pos, ctx)
         if (!result.ok) { expected.push(...result.expected); continue }
         const checks = autoNot[i]
