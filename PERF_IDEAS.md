@@ -35,11 +35,9 @@ Save/restore is done; lazy alloc + single-child are the remaining levers.
 
 ---
 
-### 3. Log-only compiled trivia capture
+### 3. ~~Log-only compiled trivia capture~~ ✅
 
-Interpreter `scanTrivia` already short-circuits when `ctx._triviaLog` is set (flat offsets, no object capture). Compiled `_tcN` still runs the full trivia parser tree via `emit(trivia)` with `capAsTrivia`, then pushes flat triples at the end.
-
-**Fix:** When `_ctx._triviaLog !== undefined` and rawChildren trivia isn't needed, emit a dedicated scan-and-log loop (or reuse `_tfN` + push offsets). Skip `_cstTriviaLog` / capture machinery on that path.
+Merged `_tcN` into `_tfN(input, pos, ctx, cap?)`: one emitted trivia parser tree per combinator; when `cap` is truthy, push flat offsets into `_ctx._triviaLog` / `_ctx._cstTriviaLog`. Trivia terminals use `capAsTrivia` so `_tf` never pollutes `_cstLeaves`. Eliminates duplicate `_tc` codegen and the extra wrapper call per capture skip (~6% on bootstrap4 vs duplicate-tree `_tc`).
 
 ---
 

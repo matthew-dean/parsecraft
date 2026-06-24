@@ -122,8 +122,7 @@ function emitNamedFnCall(ctx: Ctx, fnName: string, pos: string, failExpected: st
  */
 function emitLeafCapture(ctx: Ctx, valExpr: string, startExpr: string, endExpr: string): string[] {
   if (!ctx.capturing) return []
-  // Inside the trivia-capture fn, suppress leaf capture — the whole trivia run
-  // is recorded as a flat [start, end, insertIdx] triple by ensureTriviaCaptureFn.
+  // Inside the trivia fn, suppress leaf capture — trivia runs are logged via _cap.
   if (ctx.capAsTrivia) return []
   const i = ind(ctx)
   const lf = v(ctx, '_lf')
@@ -137,36 +136,41 @@ function emitLeafCapture(ctx: Ctx, valExpr: string, startExpr: string, endExpr: 
 }
 
 /**
- * Compile a capturing variant of the active trivia parser: `_tcN(input, pos, _ctx)`
- * records each trivia run as a flat [start, end, insertIdx] triple in
- * `_ctx._cstTriviaLog` (zero object allocations) and returns the new position.
- * Built at most once per trivia parser.
+ * Compile the active trivia parser as `_tfN(input, pos, ctx, cap?)`.
+ * When `cap` is truthy, also records `[start, end]` (and optional insertIdx) into
+ * `_ctx._triviaLog` / `_ctx._cstTriviaLog`. One emitted function serves both skip
+ * and capture call sites — no duplicate trivia parser tree, no _tc wrapper call.
  */
-function ensureTriviaCaptureFn(ctx: Ctx): string {
+function ensureTriviaFn(ctx: Ctx): string {
   const trivia = ctx.activeTrivia!
-  const existing = ctx.triviaCaptureNames.get(trivia)
+  const existing = ctx.triviaFnNames.get(trivia)
   if (existing) return existing
-  const fnName = `_tc${ctx.triviaCaptureNames.size}`
+  const fnName = `_tf${ctx.triviaFnNames.size}`
+  ctx.triviaFnNames.set(trivia, fnName)
   ctx.triviaCaptureNames.set(trivia, fnName)
 
-  const saved = { indent: ctx.indent, failLabel: ctx.failLabel, asTrivia: ctx.capAsTrivia, trivia: ctx.activeTrivia }
-  ctx.indent = 2
-  ctx.failLabel = '_cap'
-  ctx.capAsTrivia = true
+  const savedIndent    = ctx.indent
+  const savedFailLabel = ctx.failLabel
+  const savedTrivia    = ctx.activeTrivia
+  const savedCapAsTrivia = ctx.capAsTrivia
+  ctx.indent    = 2
+  ctx.failLabel = '_triv'
+  ctx.capAsTrivia = true  // trivia terminals must not push into _cstLeaves
   delete ctx.activeTrivia  // trivia parser must not skip trivia within itself
   const r = emit(trivia, ctx, '_pos')
-  ctx.indent = saved.indent; ctx.failLabel = saved.failLabel
-  ctx.capAsTrivia = saved.asTrivia
-  if (saved.trivia) ctx.activeTrivia = saved.trivia
+  ctx.indent    = savedIndent
+  ctx.failLabel = savedFailLabel
+  ctx.capAsTrivia = savedCapAsTrivia
+  if (savedTrivia) ctx.activeTrivia = savedTrivia
 
   ctx.namedFnDecls.push([
-    `function ${fnName}(input, _pos, _ctx) {`,
+    `function ${fnName}(input, _pos, _ctx, _cap) {`,
     `  let _e = _pos`,
-    `  _cap: {`,
+    `  _triv: {`,
     ...r.stmts,
     `    _e = ${r.endVar}`,
     `  }`,
-    `  if (_e > _pos) {`,
+    `  if (_cap && _e > _pos) {`,
     `    if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(_pos, _e)`,
     `    if (_ctx._cstTriviaLog !== undefined) _ctx._cstTriviaLog.push(_pos, _e, _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0)`,
     `  }`,
@@ -174,6 +178,11 @@ function ensureTriviaCaptureFn(ctx: Ctx): string {
     `}`,
   ].join('\n'))
   return fnName
+}
+
+/** Capturing trivia skip — same compiled fn as ensureTriviaFn, pass `_cap = 1`. */
+function ensureTriviaCaptureFn(ctx: Ctx): string {
+  return ensureTriviaFn(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -360,45 +369,6 @@ function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: str
   return { stmts, valueVar: vv, endVar }
 }
 
-/**
- * Ensure the active trivia parser has a fast number-returning compiled function,
- * then return its name. Kept separate from namedParsers (which return {ok,value,span})
- * so the two registries don't conflict if the same combinator appears in both roles.
- *
- * The generated function returns the new position as a number (or _pos unchanged on
- * failure) — eliminating two object allocations per trivia skip vs. the old pattern.
- */
-function ensureTriviaFn(ctx: Ctx): string {
-  const trivia = ctx.activeTrivia!
-  const existing = ctx.triviaFnNames.get(trivia)
-  if (existing) return existing
-  const fnName = `_tf${ctx.triviaFnNames.size}`
-  ctx.triviaFnNames.set(trivia, fnName)
-
-  const savedIndent    = ctx.indent
-  const savedFailLabel = ctx.failLabel
-  const savedTrivia    = ctx.activeTrivia
-  ctx.indent    = 2
-  ctx.failLabel = '_triv'
-  delete ctx.activeTrivia  // trivia parser must not skip trivia within itself
-  const r = emit(trivia, ctx, '_pos')
-  ctx.indent    = savedIndent
-  ctx.failLabel = savedFailLabel
-  if (savedTrivia) ctx.activeTrivia = savedTrivia
-
-  ctx.namedFnDecls.push([
-    `function ${fnName}(input, _pos, _ctx) {`,
-    `  let _e = _pos`,
-    `  _triv: {`,
-    ...r.stmts,
-    `    _e = ${r.endVar}`,
-    `  }`,
-    `  return _e`,
-    `}`,
-  ].join('\n'))
-  return fnName
-}
-
 function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER {
   const startV = v(ctx, '_start')
   const curV = v(ctx, '_cur')
@@ -421,7 +391,7 @@ function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: st
           `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
           `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
           `${ind(ctx)}const ${markLog} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
-          `${ind(ctx)}const ${scanEndV} = ${capFn}(input, ${curV}, _ctx)`,
+          `${ind(ctx)}const ${scanEndV} = ${capFn}(input, ${curV}, _ctx, 1)`,
         )
         const r = emit(def.parsers[i]!, ctx, scanEndV)
         stmts.push(...r.stmts)
@@ -757,7 +727,7 @@ function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: C
         `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
         `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
         `${ind(ctx)}const ${markLog} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
-        `${ind(ctx)}const ${npV} = ${capFn}(input, ${curV}, _ctx)`,
+        `${ind(ctx)}const ${npV} = ${capFn}(input, ${curV}, _ctx, 1)`,
       )
       itemPos = npV
       rollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${markLog}; `
@@ -831,7 +801,7 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
         `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
         `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
         `${ind(ctx)}const ${markLog} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
-        `${ind(ctx)}const ${spV} = ${capFn}(input, ${curV}, _ctx)`,
+        `${ind(ctx)}const ${spV} = ${capFn}(input, ${curV}, _ctx, 1)`,
       )
       sepAtPos = spV
       const sepRollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${markLog}; `
@@ -846,7 +816,7 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
         `${ind(ctx)}const ${mark2V} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
         `${ind(ctx)}const ${mark2Tl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
         `${ind(ctx)}const ${mark2Log} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
-        `${ind(ctx)}const ${npV} = ${capFn}(input, ${sepEnd}, _ctx)`,
+        `${ind(ctx)}const ${npV} = ${capFn}(input, ${sepEnd}, _ctx, 1)`,
       )
       const nextRollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${mark2V}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${mark2Tl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${mark2Log}; `
       const { stmts: nextStmts, okVar: nextOk, valVar: nextVal, endVar: nextEnd } =
