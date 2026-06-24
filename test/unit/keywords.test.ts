@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { keywords, parse } from '../../src/index.ts'
+import { keywords, word, makeWord, parse, compile } from '../../src/index.ts'
 
 describe('keywords', () => {
   it('matches any keyword in the set', () => {
@@ -31,5 +31,25 @@ describe('keywords', () => {
     const kw = keywords(['red'], { caseInsensitive: true })
     expect(parse(kw, 'RED').ok).toBe(true)
     expect(parse(kw, 'Red').ok).toBe(true)
+  })
+})
+
+describe('keywords compile', () => {
+  it('inlines keywords() to sticky regex (no runtime fallback)', () => {
+    const kw = keywords(['true', 'false'], { boundary: '_0-9A-Za-z' })
+    const compiled = compile(kw)
+    expect(compiled.source).toMatch(/const _re\d+ = /)
+    expect(compiled.source).not.toContain('_rp[')
+    expect(compiled.parse('true').ok).toBe(true)
+    expect(compiled.parse('trueish').ok).toBe(false)
+  })
+
+  it('word() and makeWord() compile identically to keywords', () => {
+    const w = word('query')
+    const mw = makeWord()('query')
+    expect(compile(w).source).not.toContain('_rp[')
+    expect(compile(mw).source).not.toContain('_rp[')
+    expect(compile(w).parse('query').ok).toBe(true)
+    expect(compile(mw).parse('queryish').ok).toBe(false)
   })
 })

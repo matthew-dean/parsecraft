@@ -13,7 +13,7 @@
  */
 import {
   literal, regex, sequence, choice, optional, many, oneOrMore,
-  transform, trivia, parser, rules,
+  transform, trivia, parser, rules, makeWord, keywords,
   type Combinator,
 } from '../../src/index.ts'
 
@@ -27,12 +27,8 @@ export const ws = trivia(regex(/(?:[ \t\n\r,]|#[^\n\r]*)*/))
 // ---------------------------------------------------------------------------
 const name = regex(/[_A-Za-z][_0-9A-Za-z]*/)
 
-function kw(word: string): Combinator<string> {
-  return transform(
-    regex(new RegExp(word + '(?![_0-9A-Za-z])')),
-    () => word,
-  )
-}
+/** GraphQL Name boundary — same as spec ident charset. */
+const kw = makeWord('_0-9A-Za-z')
 
 const intValue = transform(regex(/-?(?:0|[1-9]\d*)/), s => parseInt(s, 10))
 const floatValue = transform(
@@ -216,7 +212,10 @@ export type GQLFragmentDef = {
 }
 export type GQLDefinition = GQLOperationDef | GQLFragmentDef
 
-const operationType = choice(kw('query'), kw('mutation'), kw('subscription')) as Combinator<GQLOperationType>
+const operationType = keywords(
+  ['query', 'mutation', 'subscription'],
+  { boundary: '_0-9A-Za-z' },
+) as Combinator<GQLOperationType>
 
 const operationDefinition: Combinator<GQLOperationDef> = choice(
   transform(selectionSet, sel => ({

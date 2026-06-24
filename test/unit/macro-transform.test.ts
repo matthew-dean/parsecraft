@@ -180,6 +180,41 @@ const x = literal('x')
   })
 })
 
+describe('transformMacro — keywords inlining', () => {
+  it('inlines word()', () => {
+    const code = `
+import { word } from 'parseman' with { type: 'macro' }
+const kw = word('true')
+`.trim()
+    const result = transform(code)!
+    expect(result.code).not.toContain("from 'parseman'")
+    expect(result.code).not.toContain('_rp[')
+    expect(result.code).toMatch(/const _re\d+ = /)
+  })
+
+  it('inlines makeWord() factory calls', () => {
+    const code = `
+import { makeWord } from 'parseman' with { type: 'macro' }
+const kw = makeWord()
+const ifKw = kw('if')
+`.trim()
+    const result = transform(code)!
+    expect(result.code).not.toContain('_rp[')
+    expect(result.code).toContain('const ifKw =')
+    expect(result.code).toMatch(/const _re\d+ = /)
+  })
+
+  it('inlines makeWord(boundary)(str) chained calls', () => {
+    const code = `
+import { makeWord } from 'parseman' with { type: 'macro' }
+const color = makeWord('A-Za-z0-9_-')('color')
+`.trim()
+    const result = transform(code)!
+    expect(result.code).not.toContain("from 'parseman'")
+    expect(result.code).not.toContain('_rp[')
+  })
+})
+
 describe('transformMacro — source maps', () => {
   it('returns a source map', () => {
     const code = `

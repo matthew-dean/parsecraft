@@ -306,6 +306,36 @@ function emitLit(def: Extract<ParserDef, { tag: 'literal' }>, ctx: Ctx, pos: str
   return { stmts, valueVar: vv, endVar }
 }
 
+function escapeKeywordRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function emitKeywords(def: Extract<ParserDef, { tag: 'keywords' }>, ctx: Ctx, pos: string): ER {
+  const alt = def.words.map(escapeKeywordRe).join('|')
+  const boundary = def.boundary ? `(?![${def.boundary}])` : ''
+  const flags = def.caseInsensitive ? 'iuy' : 'uy'
+  const source = `(?:${alt})${boundary}`
+  const key = `${source}/${flags}`
+  let rName = ctx.regexMap.get(key)
+  if (rName === undefined) {
+    rName = `_re${ctx.regexDecls.length}`
+    ctx.regexDecls.push(`const ${rName} = /${source}/${flags}`)
+    ctx.regexMap.set(key, rName)
+  }
+
+  const mv = v(ctx, '_m')
+  const vv = v(ctx)
+  const stmts = [
+    `${ind(ctx)}${rName}.lastIndex = ${pos}`,
+    `${ind(ctx)}const ${mv} = ${rName}.exec(input)`,
+    `${ind(ctx)}if (${mv} === null) ${failStmt({ ...ctx, indent: 0 }, '"keyword"', pos).trim()}`,
+    `${ind(ctx)}const ${vv} = ${mv}[0]`,
+  ]
+  const endVar = `${pos} + ${vv}.length`
+  stmts.push(...emitLeafCapture(ctx, vv, pos, endVar))
+  return { stmts, valueVar: vv, endVar }
+}
+
 function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: string): ER {
   const flags = 'y' + def.flags.replace(/[gy]/g, '')
   const key = `${def.optimizedSource}/${flags}`
@@ -1041,6 +1071,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
   switch (def.tag) {
     case 'literal':   return emitLit(def, ctx, pos)
     case 'regex':     return emitRegex(def, ctx, pos)
+    case 'keywords':  return emitKeywords(def, ctx, pos)
     case 'sequence':  return emitSeq(def, ctx, pos)
     case 'choice':    return emitChoice(def, ctx, pos)
     case 'many':

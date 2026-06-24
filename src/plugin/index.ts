@@ -20,7 +20,7 @@
 import { createUnplugin } from 'unplugin'
 import { parseSync } from 'oxc-parser'
 import MagicString from 'magic-string'
-import { evaluateExpr, evaluateParserFactory, referencesAny, type Scope, type ScopeEntry } from './evaluator.ts'
+import { evaluateExpr, evaluateParserFactory, evaluateWordFactory, referencesAny, type Scope, type ScopeEntry } from './evaluator.ts'
 import { compile } from '../compiler/codegen.ts'
 import type { Combinator } from '../types.ts'
 import type {
@@ -217,6 +217,11 @@ export function transformMacro(
         const mapFnSources: string[] = []
         const parser = evaluateExpr(init, scope, code, mapFnSources)
         if (parser === null) {
+          const wordFactory = evaluateWordFactory(init, scope, code)
+          if (wordFactory) {
+            ;(scope as Map<string, unknown>).set(varName, wordFactory)
+            continue
+          }
           warn(init.start, `"${varName}" references a parseman macro import but isn't a statically-evaluable combinator`)
           continue
         }

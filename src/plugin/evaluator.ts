@@ -36,9 +36,17 @@ export type Scope = Map<string, ScopeEntry>
 type XScopeVal = ScopeEntry | unknown
 type XScope = Map<string, XScopeVal>
 
+type WordFactoryEntry = { tag: 'wordFactory'; boundary: string }
+
+function isWordFactory(v: unknown): v is WordFactoryEntry {
+  return !!v && typeof v === 'object' && (v as WordFactoryEntry).tag === 'wordFactory'
+}
+
 const SUPPORTED: Record<string, (...args: unknown[]) => Combinator<unknown>> = {
   literal:   (...a) => parseman.literal(a[0] as string, a[1] as parseman.LiteralOptions | undefined),
   regex:     (...a) => parseman.regex(a[0] as RegExp, a[1] as string | undefined),
+  keywords:  (...a) => parseman.keywords(a[0] as readonly string[], a[1] as parseman.KeywordsOptions | undefined),
+  word:      (...a) => parseman.word(a[0] as string, a[1] as string | undefined),
   sequence:  (...a) => (parseman.sequence as (...p: Combinator<unknown>[]) => Combinator<unknown[]>)(...(a as Combinator<unknown>[])),
   choice:    (...a) => (parseman.choice as (...p: Combinator<unknown>[]) => Combinator<unknown>)(...(a as Combinator<unknown>[])),
   many:      (...a) => parseman.many(a[0] as Combinator<unknown>),
@@ -91,6 +99,33 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
   if (node.type !== 'CallExpression') return null
 
   const callee = node.callee
+
+  // makeWord(boundary)(str)
+  if (callee.type === 'CallExpression'
+    && callee.callee.type === 'Identifier'
+    && callee.callee.name === 'makeWord') {
+    const boundaryArg = callee.arguments[0]
+    const strArg = node.arguments[0]
+    if (!strArg || strArg.type === 'SpreadElement') return null
+    const boundary = boundaryArg && boundaryArg.type !== 'SpreadElement'
+      ? anyValue(boundaryArg as Expression, scope, code, mfs)
+      : '_0-9A-Za-z'
+    const str = anyValue(strArg as Expression, scope, code, mfs)
+    if (typeof boundary !== 'string' || typeof str !== 'string') return null
+    try { return parseman.word(str, boundary) } catch { return null }
+  }
+
+  if (callee.type === 'Identifier') {
+    const factory = scope.get(callee.name)
+    if (isWordFactory(factory)) {
+      const [strArg] = node.arguments
+      if (!strArg || strArg.type === 'SpreadElement') return null
+      const str = anyValue(strArg as Expression, scope, code, mfs)
+      if (typeof str !== 'string') return null
+      try { return parseman.word(str, factory.boundary) } catch { return null }
+    }
+  }
+
   if (callee.type !== 'Identifier') return null
 
   // transform(inner, fn) — capture fn source text before pushing to mfs
@@ -281,7 +316,18 @@ function anyValue(node: Expression, scope: XScope, code?: string, mfs?: string[]
     return (obj as Record<string, unknown>)[propName] ?? null
   }
 
-  if (node.type === 'CallExpression') return exprToCombi(node, scope, code, mfs)
+  if (node.type === 'CallExpression') {
+    const callee = node.callee
+    if (callee.type === 'Identifier' && callee.name === 'makeWord') {
+      const boundaryArg = node.arguments[0]
+      const boundary = boundaryArg && boundaryArg.type !== 'SpreadElement'
+        ? anyValue(boundaryArg as Expression, scope, code, mfs)
+        : '_0-9A-Za-z'
+      if (typeof boundary !== 'string') return null
+      return { tag: 'wordFactory', boundary } satisfies WordFactoryEntry
+    }
+    return exprToCombi(node, scope, code, mfs)
+  }
 
   return null
 }
@@ -289,6 +335,23 @@ function anyValue(node: Expression, scope: XScope, code?: string, mfs?: string[]
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/** Evaluate makeWord(boundary?) to a factory entry (not a combinator). */
+export function evaluateWordFactory(
+  node: Expression,
+  scope: Scope,
+  code?: string,
+): WordFactoryEntry | null {
+  if (node.type !== 'CallExpression') return null
+  const callee = node.callee
+  if (callee.type !== 'Identifier' || callee.name !== 'makeWord') return null
+  const boundaryArg = node.arguments[0]
+  const boundary = boundaryArg && boundaryArg.type !== 'SpreadElement'
+    ? anyValue(boundaryArg as Expression, scope as XScope, code)
+    : '_0-9A-Za-z'
+  if (typeof boundary !== 'string') return null
+  return { tag: 'wordFactory', boundary }
+}
 
 /** Evaluate a single combinator expression. Returns null if unresolvable. */
 export function evaluateExpr(

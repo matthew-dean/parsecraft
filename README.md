@@ -6,8 +6,6 @@
 
 Write parsers in TypeScript — fast enough to run as-is, and blazing fast when the bundler macro kicks in. Same code either way; no grammar files, no generated output to check in. Drop the plugin in tests or anywhere a bundler isn't around and everything still works.
 
-_Note: Not necessarily production-ready! I still have test cases and sample parsers I want to build to more rigorously test the API and performance._
-
 ## Benchmarks
 
 Measured on Apple M2 Pro. Bars show µs per parse — shorter is faster.
@@ -118,29 +116,43 @@ Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMor
 
 ## Combinators
 
+**Terminology:** In this README, **combinator** means any building block that matches input (`literal`, `choice`, `sequence`, …). The `parser()` **function** is different — it wraps a root combinator with document-level options (trivia, line tracking) and gives you `.parse(input)`. Same word family, two roles: combinators compose the grammar; `parser()` configures how you run it.
+
+A combinator reads from the input at the current position and succeeds or fails (returning a value on success). Composing combinators with `sequence`, `choice`, `many`, etc. is how you express parsing decisions.
+
+`makeWord`, `rules`, and `parser` are **helpers**: definition-time factories or wrappers that *produce* combinators. They never match input themselves.
+
 | Combinator | Description |
 |---|---|
 | `literal(s, opts?)` | Exact string match. `opts.caseInsensitive` for locale-aware comparison. |
 | `word(s, boundary?)` | Single keyword with automatic word-boundary guard. |
-| `wordContext(boundary?)` | Returns a keyword factory with a baked-in boundary (e.g. CSS `A-Za-z0-9_-`). |
+| `keywords(words, opts?)` | Match one of many keywords (longest-first), with optional boundary and case folding. |
 | `regex(pattern)` | Match a regex at the current position. Patterns are optimized via `regexp-tree`. |
-| `sequence(...parsers)` | Match all in order; returns a tuple `[v1, v2, ...]`. Skips trivia between terms when trivia is set. |
-| `choice(...parsers)` | Ordered alternatives (PEG — first match wins). Disjoint first chars → O(1) dispatch. |
-| `many(parser)` | Zero or more; compiles to a `while` loop. |
-| `oneOrMore(parser)` | One or more; fails if nothing matches. |
-| `optional(parser)` | Zero or one; returns `null` on no match. |
-| `sepBy(parser, sep)` | Zero or more `parser` separated by `sep`. |
-| `transform(parser, fn)` | Map the result: `fn(value, span) → newValue`. |
+| `sequence(...combinators)` | Match all in order; returns a tuple `[v1, v2, ...]`. Skips trivia between terms when trivia is set. |
+| `choice(...combinators)` | Ordered alternatives (PEG — first match wins). Disjoint first chars → O(1) dispatch. |
+| `many(combinator)` | Zero or more; compiles to a `while` loop. |
+| `oneOrMore(combinator)` | One or more; fails if nothing matches. |
+| `optional(combinator)` | Zero or one; returns `null` on no match. |
+| `sepBy(combinator, sep)` | Zero or more combinator matches separated by `sep`. |
+| `transform(combinator, fn)` | Map the result: `fn(value, span) → newValue`. |
 | `skip(main, skipped)` | Match `main` then `skipped`; return `main`'s value. |
-| `rules(factory)` | Named grammar rules — no forward declarations needed, handles mutual recursion. |
-| `node(type, parser, build)` | CST/AST rule: captures `parser`'s terminals into `children`/`rawChildren` and trivia offsets into a flat `triviaLog`, then calls `build(children, rawChildren, span, triviaLog)`. |
+| `node(type, combinator, build)` | CST/AST rule: captures the combinator's terminals into `children`/`rawChildren` and trivia offsets into a flat `triviaLog`, then calls `build(children, rawChildren, span, triviaLog)`. |
 | `ref<T>()` | Low-level forward declaration slot (use `rules()` in most cases). |
-| `not(parser)` | Negative lookahead — succeeds (consuming nothing) when `parser` fails. |
+| `not(combinator)` | Negative lookahead — succeeds (consuming nothing) when the combinator fails. |
 | `guard(predicate)` | Succeeds only when `predicate(ctx)` returns true; used for context-sensitive rules. |
-| `withCtx(extra, parser)` | Merge `extra` into the user context for the duration of `parser`. |
-| `recover(parser, sentinel)` | On failure, skip input until `sentinel` matches; returns a `CSTError` node. |
+| `withCtx(extra, combinator)` | Merge `extra` into the user context for the duration of the combinator. |
+| `recover(combinator, sentinel)` | On failure, skip input until `sentinel` matches; returns a `CSTError` node. |
 | `scanTo(sentinel, opts?)` | Scan forward until `sentinel` matches (sentinel not consumed). Pass `opts.skip` to treat certain patterns as opaque blobs that may contain the sentinel character. Pass `opts.orEOF: true` to succeed at end-of-input. |
 | `balanced(open, close, opts?)` | Match a single balanced delimited region — e.g. `(…)` or `[…]` — including the delimiters. Primarily used as an element of `scanTo`'s `opts.skip` list. |
+
+### Helpers (produce combinators at definition time)
+
+| Helper | Description |
+|---|---|
+| `trivia(combinator)` | Label a combinator as skippable filler (whitespace, comments). Does not skip by itself — pass the result to `parser({ trivia })` to turn on auto-skipping between tokens. |
+| `makeWord(boundary?)` | Returns `(str) => Combinator` with a fixed word-boundary class. Not a combinator — see [keyword disambiguation](#ordered-choice-and-keyword-disambiguation). |
+| `rules(factory)` | Named, mutually-recursive rule bundle. See [Named and recursive rules](#named-and-recursive-rules). |
+| `parser({ trivia }, combinator)` | Wrap a root combinator with document-level trivia skipping. See [Whitespace and comment skipping](#whitespace-and-comment-skipping). |
 
 ---
 
@@ -169,14 +181,17 @@ Two takeaways:
 
 ## Whitespace and comment skipping
 
-Wrap your root combinator with `parser()` to declare trivia — whitespace and comments to skip between tokens. This bakes the setting into the combinator tree so all modes (interpreter, `compile()`, macro build) behave identically:
+Skipping filler between tokens is a two-step setup:
+
+1. **Define** what counts as filler — usually `regex(/\s+/)`, comments, or both — and wrap it with `trivia()`. This only sets a metadata flag (`isTrivia`); it does not change when the parser runs.
+2. **Activate** skipping by passing that combinator to `parser({ trivia }, combinator)`. That installs it on the parse context so `sequence`, `sepBy`, `choice`, etc. consume matching filler automatically between terms.
 
 ```ts
 import { parser, regex, trivia, sepBy, literal } from 'parseman'
 
-const ws   = trivia(regex(/\s*/))
+const ws   = trivia(regex(/\s*/))   // "this pattern is filler" — not skipped yet
 const word = regex(/[a-z]+/)
-const list = parser({ trivia: ws }, sepBy(word, literal(',')))
+const list = parser({ trivia: ws }, sepBy(word, literal(',')))  // skipping on
 
 list.parse('foo ,  bar , baz')
 // { ok: true, value: ['foo', 'bar', 'baz'], ... }
@@ -196,18 +211,27 @@ const ws           = trivia(many(choice(regex(/\s+/), lineComment, blockComment)
 
 `choice()` uses PEG ordered-choice semantics: first match wins. **Order matters.**
 
-For keywords — where `if` should not match the prefix of `ifdef` — use `word()` or `wordContext()`:
+For keywords — where `if` should not match the prefix of `ifdef` — use the `word` combinator. Pass a custom **boundary** (the character class that must *not* follow the match) per call, or use `makeWord` to bake one boundary into a small factory:
 
 ```ts
-const kw = wordContext()  // bakes in a default identifier boundary once
+import { word, makeWord, choice, regex } from 'parseman'
+
+word('true')                       // combinator — default boundary
+word('color', 'A-Za-z0-9_-')       // combinator — one-off custom boundary
+
+// Helper — returns a function that produces combinators (not a combinator itself)
+const kw = makeWord()
+const cssKw = makeWord('A-Za-z0-9_-')
 
 const token = choice(
-  kw('if'),
+  kw('if'),                        // each call yields a combinator
   kw('else'),
-  kw('return'),
-  regex(/[a-zA-Z_]\w*/),  // ident fallback
+  cssKw('color'),
+  regex(/[a-zA-Z_]\w*/),           // ident fallback
 )
 ```
+
+`makeWord` is optional — `(s) => word(s, 'A-Za-z0-9_-')` is equivalent.
 
 Or build the boundary guard by hand with `not()`:
 
@@ -290,7 +314,7 @@ value.define(choice(object, array, str, num, bool, nil))
 
 ## Grammars that build an AST
 
-For grammars that produce a typed CST/AST, support incremental re-parsing, or care about trivia, wrap each rule in `node(type, parser, build)`. parseman captures the rule's terminals into `children` / `rawChildren` and records trivia as flat `[start, end, insertIdx, …]` triples in `triviaLog`, then hands all four to `build(children, rawChildren, span, triviaLog)`. **Capture is the library's job:** you don't wrap terminals to recover their spans, and you don't reconstruct trivia — it's collected as the parser runs, in both the interpreter and the compiled build. Use `buildTriviaIndex(tree, input)` to turn `triviaLog` into a before/after lookup table.
+For grammars that produce a typed CST/AST, support incremental re-parsing, or care about trivia, wrap each rule in `node(type, combinator, build)`. parseman captures the rule's terminals into `children` / `rawChildren` and records trivia as flat `[start, end, insertIdx, …]` triples in `triviaLog`, then hands all four to `build(children, rawChildren, span, triviaLog)`. **Capture is the library's job:** you don't wrap terminals to recover their spans, and you don't reconstruct trivia — it's collected as the parser runs, in both the interpreter and the compiled build. Use `buildTriviaIndex(tree, input)` to turn `triviaLog` into a before/after lookup table.
 
 ```ts
 import { rules, parser, node, regex, literal, sequence, many, trivia } from 'parseman'
@@ -316,7 +340,7 @@ Expr.parse('1 + 2 + 3', 0, { trackLines: false })
 - **`rawChildren`** — structural children only (same items as `children`, without trivia tokens).
 - **`triviaLog`** — flat `[start, end, insertIdx, …]` triples for whitespace/comments consumed between terms. `insertIdx` is the `rawChildren` index before which the trivia was consumed. Pass the tree to `buildTriviaIndex(tree, input)` for a `before`/`after` map of trivia tokens — useful for whitespace-sensitive syntax (e.g. CSS `div p` vs `div.p`).
 
-Each rule returned from the factory is independently callable — `Expr`, `Num` above are the **rule registry** incremental re-parsing needs. Wrap a rule's inner parser in `parser({ trivia })` so trivia-skipping is baked in regardless of which rule you start from; the macro compiles the wrapper (and all capture) away to flat JS.
+Each rule returned from the factory is independently callable — `Expr`, `Num` above are the **rule registry** incremental re-parsing needs. Wrap a rule's inner combinator in `parser({ trivia }, combinator)` so trivia-skipping is baked in regardless of which rule you start from; the macro compiles the wrapper (and all capture) away to flat JS.
 
 > `transform(p, fn)` is still the tool for plain value-mapping (no children/trivia). `node()` is for CST/AST rules — it adds the capture `transform` doesn't. Both compile under the macro.
 
@@ -383,7 +407,7 @@ export const { Expr } = rules<{ Expr: Combinator<Node> }>(g => {
 
 `withCtx` and `guard` implement context-sensitive rules without mutating shared state, and they compose into `rules()` like any other combinator.
 
-`withCtx(extra, parser)` merges `extra` into the user context for the duration of `parser`. `guard(predicate)` succeeds only when `predicate(ctx)` returns true, gating a rule behind runtime context.
+`withCtx(extra, combinator)` merges `extra` into the user context for the duration of the combinator. `guard(predicate)` succeeds only when `predicate(ctx)` returns true, gating a rule behind runtime context.
 
 ```ts
 import { rules, withCtx, guard, many, sequence, choice, literal, regex, trivia, parser } from 'parseman'
@@ -406,7 +430,7 @@ export const { Program } = rules<{ Program: Combinator<unknown> }>(g => {
 
 ## Error recovery
 
-`recover(parser, sentinel)` wraps a parser so that on failure it skips forward until `sentinel` matches, then returns a `CSTError` node instead of bailing on the whole parse. Error recovery is never pretty, but at least you can keep going.
+`recover(combinator, sentinel)` wraps a combinator so that on failure it skips forward until `sentinel` matches, then returns a `CSTError` node instead of bailing on the whole parse. Error recovery is never pretty, but at least you can keep going.
 
 ```ts
 import { recover, scanTo, balanced, literal } from 'parseman'
