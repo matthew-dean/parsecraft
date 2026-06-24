@@ -189,15 +189,24 @@ export class Parser<N extends NodeLike = CSTNode> {
         const children: (N | CSTLeaf | CSTError)[] = []
         const rawChildren: CSTRawChild[] = []
         const triviaLog: number[] = ctx.captureTrivia ? [] : _EMPTY_TRIVIA_LOG
-        const innerCtx: ParseContext = {
-          ...ctx,
-          _cstChildren:    children as unknown[],
-          _cstLeaves:      children as unknown[],
-          _cstRawChildren: rawChildren as unknown[],
-          _cstTriviaLog:   ctx.captureTrivia ? triviaLog : undefined,
-        }
 
-        const r = inner.parse(input, pos, innerCtx)
+        // Save/restore instead of spreading to avoid one ParseContext allocation per node.
+        const sCh  = ctx._cstChildren
+        const sLv  = ctx._cstLeaves
+        const sRaw = ctx._cstRawChildren
+        const sTl  = ctx._cstTriviaLog
+        ctx._cstChildren    = children as unknown[]
+        ctx._cstLeaves      = children as unknown[]
+        ctx._cstRawChildren = rawChildren as unknown[]
+        ctx._cstTriviaLog   = ctx.captureTrivia ? triviaLog : undefined
+
+        const r = inner.parse(input, pos, ctx)
+
+        ctx._cstChildren    = sCh
+        ctx._cstLeaves      = sLv
+        ctx._cstRawChildren = sRaw
+        ctx._cstTriviaLog   = sTl
+
         if (!r.ok) return r
 
         const node = self.buildNode(type, r.span, children, state, rawChildren, triviaLog)

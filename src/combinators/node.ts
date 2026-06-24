@@ -23,8 +23,6 @@ export type BuildNode<N> = (
   triviaLog: readonly number[],
 ) => N
 
-const _EMPTY: readonly number[] = Object.freeze([])
-
 export function node<N>(type: string, parser: Combinator<unknown>, build: BuildNode<N>): Combinator<N> {
   const meta: ParserMeta = {
     firstSet: parser._meta.firstSet,
@@ -39,22 +37,34 @@ export function node<N>(type: string, parser: Combinator<unknown>, build: BuildN
       const children: unknown[] = []
       const rawChildren: unknown[] = []
       const triviaLog: number[] = []
-      const innerCtx: ParseContext = {
-        ...ctx,
-        captureTrivia: true,
-        _cstChildren: children,
-        _cstLeaves: children,
-        _cstRawChildren: rawChildren,
-        _cstTriviaLog: triviaLog,
-      }
-      const r = parser.parse(input, pos, innerCtx)
+
+      // Save/restore ctx fields instead of spreading to avoid one object allocation per node() call.
+      const sCh  = ctx._cstChildren
+      const sLv  = ctx._cstLeaves
+      const sRaw = ctx._cstRawChildren
+      const sTl  = ctx._cstTriviaLog
+      const sCap = ctx.captureTrivia
+      ctx._cstChildren    = children
+      ctx._cstLeaves      = children
+      ctx._cstRawChildren = rawChildren
+      ctx._cstTriviaLog   = triviaLog
+      ctx.captureTrivia   = true
+
+      const r = parser.parse(input, pos, ctx)
+
+      ctx._cstChildren    = sCh
+      ctx._cstLeaves      = sLv
+      ctx._cstRawChildren = sRaw
+      ctx._cstTriviaLog   = sTl
+      ctx.captureTrivia   = sCap
+
       if (!r.ok) return r
 
       const built = build(children, rawChildren, r.span, triviaLog)
       const isNodeLike = typeof built === 'object' && built !== null && (built as { _tag?: string })._tag === 'node'
-      if (ctx._cstChildren) (ctx._cstChildren as unknown[]).push(built)
-      if (ctx._cstRawChildren) {
-        (ctx._cstRawChildren as unknown[]).push(
+      if (sCh)  sCh.push(built)
+      if (sRaw) {
+        sRaw.push(
           isNodeLike ? built : { _tag: 'leaf', value: typeof built === 'string' ? built : '', span: r.span }
         )
       }
