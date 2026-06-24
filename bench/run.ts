@@ -17,9 +17,13 @@ import { buildParsermanCSTJSON, buildParsermanCSTJSONNoTriv } from './parseman-c
 import { parseCSV, compiledCSV, csvParser } from '../examples/csv/parser.ts'
 import { parseConfig, compiledConfig } from '../examples/toml-ish/parser.ts'
 import { parseGraphQL, graphqlDoc } from '../examples/graphql/parser.ts'
-import { parseCssCompiled, parseCss } from '../examples/css/parser.ts'
-import { readCssFixture } from './css-fixture.ts'
 import { buildCombinatorInliningCases, benchCase } from './combinator-inlining.ts'
+import {
+  SMALL_JSON, MEDIUM_JSON, LARGE_JSON,
+  SMALL_CSV, LARGE_CSV,
+  SMALL_GQL, MEDIUM_GQL, LARGE_GQL,
+} from './fixtures.ts'
+import { loadBaseline, printParsemanReport, runParsemanSuite } from './parseman-perf.ts'
 import { compile } from '../src/index.ts'
 import { buildChevrotainJSON } from './chevrotain-json.ts'
 import { buildChevrotainCSV } from './chevrotain-csv.ts'
@@ -49,84 +53,8 @@ const peggyCSV          = buildPeggyCSV()
 const peggyGQL          = buildPeggyGraphQL()
 
 // ---------------------------------------------------------------------------
-// Fixtures
+// Fixtures (shared with parseman-perf.ts)
 // ---------------------------------------------------------------------------
-const SMALL_JSON = JSON.stringify({ name: 'Alice', age: 30, active: true, score: 98.6 })
-const MEDIUM_JSON = JSON.stringify({
-  users: Array.from({ length: 20 }, (_, i) => ({
-    id: i + 1, name: `User ${i}`, email: `user${i}@example.com`,
-    scores: [42.1, 88.7],
-    active: i % 2 === 0,
-  }))
-})
-const LARGE_JSON = JSON.stringify({
-  items: Array.from({ length: 200 }, (_, i) => ({
-    id: i, value: `item-${i}`, nested: { a: i * 2, b: `str-${i}` }
-  }))
-})
-
-const SMALL_CSV = `name,age,city\nAlice,30,NYC\nBob,25,LA\nCarol,35,Chicago\n`
-const LARGE_CSV = Array.from({ length: 500 }, (_, i) =>
-  `user${i},${20 + (i % 50)},city${i % 20},${(i * 1.5).toFixed(2)},${i % 2 === 0 ? 'true' : 'false'}`
-).join('\n') + '\n'
-
-// GraphQL fixtures — valid per the October 2021 spec
-const SMALL_GQL = `{ user { name email age } }`
-const MEDIUM_GQL = `
-query GetData {
-  user(id: 42) {
-    name
-    email
-    posts {
-      title
-      body
-      comments(limit: 10) {
-        author
-        text
-        createdAt
-      }
-    }
-    friends {
-      name
-      age
-    }
-  }
-  account(active: true) {
-    id
-    role
-    email
-    permissions {
-      read
-      write
-      admin
-    }
-  }
-}`.trim()
-const LARGE_GQL = Array.from({ length: 25 }, (_, i) => `
-query Op${i}($id: ID!, $flag: Boolean) {
-  node${i}(id: $id, page: ${i % 10}) {
-    field1
-    field2
-    field3
-    nested1 {
-      sub1
-      sub2
-      sub3
-      sub4
-    }
-    nested2(param: ${i * 2}, flag: $flag) {
-      a
-      b
-      c
-      d
-      e
-    }
-    nested3 {
-      deep1 { x y }
-      deep2 { p q }
-    }
-  }
-}`.trim()).join('\n')
 
 // ---------------------------------------------------------------------------
 // Benchmark runners
@@ -257,26 +185,9 @@ for (const c of buildCombinatorInliningCases()) {
 }
 
 // ---------------------------------------------------------------------------
-// CSS grammar (jess port) — node()-heavy CST + trivia capture
+// Parseman-only suite — interpreted vs compiled, all example grammars + baseline Δ
 // ---------------------------------------------------------------------------
-console.log('\n=== CSS parsing (warm) — jess grammar, CST + trivia ===')
-try {
-  const bootstrap = readCssFixture('bootstrap4.css')
-  console.log(`\n  [bootstrap4] ${bootstrap.length} bytes`)
-  bench('Parséman CSS (compiled, full)', () => parseCssCompiled(bootstrap), 30)
-  bench('Parséman CSS (interpreted, full)', () => parseCss(bootstrap), 30)
-} catch (e) {
-  console.log(`  (skipped — ${(e as Error).message})`)
-}
-for (const fixture of ['selector.css', 'decls.css'] as const) {
-  try {
-    const src = readCssFixture(fixture)
-    console.log(`\n  [${fixture}] ${src.length} bytes`)
-    bench('Parséman CSS (compiled, full)', () => parseCssCompiled(src), 500)
-    bench('Parséman CSS (interpreted, full)', () => parseCss(src), 500)
-  } catch {
-    // fixture missing
-  }
-}
+const parsemanRows = runParsemanSuite()
+printParsemanReport(parsemanRows, loadBaseline())
 
 console.log()

@@ -80,12 +80,15 @@ Patterns like `\d+`, `[A-Za-z_]\w*`, single char classes — emit hand-rolled sc
 
 ## Measuring
 
-- `pnpm bench` — JSON, CSV, GraphQL, CST JSON, **combinator inlining**, **CSS (jess grammar port)**.
+- `pnpm bench` — external parser comparison **plus** Parseman interpreted vs compiled across all example grammars (with baseline Δ).
+- `pnpm bench:baseline` — refresh `bench/parseman-baseline.json` **and append** a snapshot to `bench/parseman-history.jsonl` (commit both to track the needle over time).
+- `test/perf/parseman-perf.test.ts` — smoke + compiled absolute (25%) and speedup-ratio (15%) regression guard vs baseline (interpreted absolute skipped in CI — vitest/JIT noise).
 - `test/perf/css-parser.test.ts` — CSS correctness + bootstrap timing when fixture available.
+- `test/parity/trivia-log-regression.test.ts` — interpreted/compiled `_triviaLog` golden parity.
 - `test/parity/compiler-capture-choice.test.ts` — capturing choice fast-path parity.
 - `test/unit/codegen-output.test.ts` — snapshot guard on emitted JS shape.
 - `test/parity/compiler.test.ts` — correctness after codegen changes.
 
-Fixtures: `fixtures/css/` (small); bootstrap4 via `CSS_FIXTURE_ROOT` or less.js test-data path.
+**Parseman baseline** (`bench/parseman-baseline.json`): CI regression anchor — median µs/op for interpreted **and** compiled on JSON, CSV, GraphQL, TOML-ish, lang, and CSS fixtures. Updated deliberately when you accept a new perf level.
 
-**CSS perf baseline** (`parseCss` / `parseCssCompiled`): jess `parseCssFn` shape — `_triviaLog` on ctx, CST `node()` build, `buildLazyTriviaMap`. Uses lightweight CST nodes, not Jess AST. Compare compiled vs interpreted medians on bootstrap4 (~30ms class, not the ~20ms no-trivia shortcut).
+**Parseman history** (`bench/parseman-history.jsonl`): append-only time series (one JSON line per `bench:baseline`). `pnpm bench` reports Δ vs baseline plus Δc↓prev / Δc↓origin from history. `printHistoryIndex()` lists bootstrap4 compiled µs across all snapshots.

@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc",
     "bench": "node --import tsx/esm bench/run.ts",
+    "bench:baseline": "node --import tsx/esm bench/update-parseman-baseline.ts",
     "build:chevrotain-bench": "node --import tsx/esm scripts/build-chevrotain-bench.mjs",
     "bench:compile-grammars": "peggy --format es -o bench/json-parser.js bench/json.pegjs && peggy --format es -o bench/csv-parser.js bench/csv.pegjs && peggy --format es -o bench/graphqlite-parser.js bench/graphqlite.pegjs"
   },
