@@ -104,6 +104,15 @@ export type ParseContext = {
    * allocations — just number pushes.
    */
   _triviaLog?: number[]
+  /**
+   * Framework-internal: flat per-node trivia log for CST capture mode.
+   * When set alongside _cstRawChildren, each trivia run is recorded as three
+   * numbers [start, end, insertIdx] appended here instead of allocating a
+   * CSTTrivia object. `insertIdx` is the _cstRawChildren.length at the moment
+   * the trivia was consumed, so consumers know where in rawChildren to insert it.
+   * Zero object allocations — replaces the CSTTrivia object path entirely.
+   */
+  _cstTriviaLog?: number[]
 }
 
 /**

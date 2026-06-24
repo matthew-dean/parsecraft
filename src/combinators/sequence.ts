@@ -36,13 +36,16 @@ export function sequence<T extends [Combinator<unknown>, ...Combinator<unknown>[
           const scan = scanTrivia(input, cur, ctx)
           const raw = ctx._cstRawChildren as unknown[] | undefined
           const mark = raw ? raw.length : 0
+          const tlog = ctx._cstTriviaLog
+          const tmark = tlog ? tlog.length : 0
           scan.commit()
           const result = parsers[i]!.parse(input, scan.end, ctx)
           if (!result.ok) return result as ParseFail
           if (result.span.end > scan.end) {
             cur = result.span.end
-          } else if (raw) {
-            raw.length = mark
+          } else {
+            if (raw) raw.length = mark
+            if (tlog) tlog.length = tmark
           }
           values.push(result.value)
           continue

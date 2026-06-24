@@ -4,6 +4,8 @@ import type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTRawChild, NodeLike } fro
 import { makeParseDoc } from './incremental.ts'
 import type { ParseDoc } from './incremental.ts'
 
+const _EMPTY_TRIVIA_LOG: readonly number[] = Object.freeze([])
+
 // ---------------------------------------------------------------------------
 // TypeScript helpers
 // ---------------------------------------------------------------------------
@@ -150,10 +152,11 @@ export class Parser<N extends NodeLike = CSTNode> {
    * Override to produce a custom AST node instead of a plain CSTNode.
    * The returned object must satisfy NodeLike for IncrementalParser to work.
    *
-   * `rawChildren` is `children` plus any trivia tokens (whitespace/comments)
-   * consumed between terms, in parse order. Use it to inspect trivia when the
-   * grammar is whitespace-sensitive (e.g. CSS descendant vs adjacent combinators).
-   * The default implementation ignores `rawChildren`.
+   * `rawChildren` is the structural children (nodes + leaves + errors) in parse
+   * order. `triviaLog` carries trivia as a flat number array: `[start, end,
+   * insertIdx, ...]` triples, where `insertIdx` is the rawChildren index before
+   * which this trivia run was consumed. Use `buildTriviaIndex` or
+   * `triviaLogToRaw` to work with it. The default implementation ignores both.
    */
   protected buildNode(
     type: string,
@@ -161,6 +164,7 @@ export class Parser<N extends NodeLike = CSTNode> {
     children: ReadonlyArray<N | CSTLeaf | CSTError>,
     state: unknown,
     _rawChildren: ReadonlyArray<CSTRawChild>,
+    _triviaLog: readonly number[],
   ): N {
     return { _tag: 'node', type, span, children: children as CSTNode['children'], state } as unknown as N
   }
@@ -184,21 +188,19 @@ export class Parser<N extends NodeLike = CSTNode> {
 
         const children: (N | CSTLeaf | CSTError)[] = []
         const rawChildren: CSTRawChild[] = []
+        const triviaLog: number[] = ctx.captureTrivia ? [] : _EMPTY_TRIVIA_LOG
         const innerCtx: ParseContext = {
           ...ctx,
           _cstChildren:    children as unknown[],
           _cstLeaves:      children as unknown[],
           _cstRawChildren: rawChildren as unknown[],
+          _cstTriviaLog:   ctx.captureTrivia ? triviaLog : undefined,
         }
 
         const r = inner.parse(input, pos, innerCtx)
         if (!r.ok) return r
 
-        const node = self.buildNode(type, r.span, children, state, rawChildren)
-        // A custom buildNode may collapse a rule to a non-node value (e.g. a
-        // bare string). Keep the raw value in `children` (the AST view) but
-        // record it in `rawChildren` as a spanned leaf so the parent can still
-        // recover this child's source span (for fieldSpans/valueSpans).
+        const node = self.buildNode(type, r.span, children, state, rawChildren, triviaLog)
         const isNodeLike = typeof node === 'object' && node !== null && (node as { _tag?: string })._tag === 'node'
         if (ctx._cstChildren)    (ctx._cstChildren as unknown[]).push(node)
         if (ctx._cstRawChildren) (ctx._cstRawChildren as unknown[]).push(
@@ -211,7 +213,7 @@ export class Parser<N extends NodeLike = CSTNode> {
 
   /** Reconstruct a node with a new children array (used by IncrementalParser). */
   rebuild(node: N, newChildren: ReadonlyArray<N | CSTLeaf | CSTError>): N {
-    return this.buildNode(node.type, node.span, newChildren, node.state, [])
+    return this.buildNode(node.type, node.span, newChildren, node.state, [], _EMPTY_TRIVIA_LOG)
   }
 
   /**

@@ -1,7 +1,5 @@
 import type { ParseContext } from '../types.ts'
 
-type TriviaSink = { _tag: string; value: string; span: { start: number; end: number } }
-
 /**
  * Result of scanning trivia: the position after it, plus a `commit()` that
  * records the matched trivia tokens into the active rawChildren collector.
@@ -43,24 +41,16 @@ export function scanTrivia(input: string, cur: number, ctx: ParseContext): Trivi
     }
   }
 
-  // ── Capture mode: record trivia tokens into rawChildren ───────────────────
-  if (ctx.captureTrivia && ctx._cstRawChildren) {
-    const sink: TriviaSink[] = []
-    const tr = triviaP.parse(input, cur, {
-      trackLines: ctx.trackLines,
-      state: ctx.state,
-      _cstLeaves: sink as unknown[],
-    })
+  // ── Capture mode: record trivia into flat _cstTriviaLog ──────────────────
+  if (ctx.captureTrivia && ctx._cstTriviaLog !== undefined) {
+    const tr = triviaP.parse(input, cur, { trackLines: ctx.trackLines, state: ctx.state })
     if (tr.ok && tr.span.end > cur) {
-      const out = ctx._cstRawChildren as unknown[]
+      const tlog = ctx._cstTriviaLog
+      const raw = ctx._cstRawChildren as unknown[] | undefined
       return {
         end: tr.span.end,
         commit: () => {
-          for (const tok of sink) {
-            if (tok._tag === 'leaf' && tok.span.end > tok.span.start) {
-              out.push({ _tag: 'trivia', value: tok.value, span: tok.span })
-            }
-          }
+          tlog.push(cur, tr.span.end, raw ? raw.length : 0)
         },
       }
     }

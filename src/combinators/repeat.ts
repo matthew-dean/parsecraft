@@ -20,6 +20,8 @@ function repItem<T>(
 ): { value: T; end: number } | { fail: ParseResult<T> } | 'stop' {
   const raw = ctx._cstRawChildren as unknown[] | undefined
   const mark = raw ? raw.length : 0
+  const tlog = ctx._cstTriviaLog
+  const tmark = tlog ? tlog.length : 0
   let pos = cur
   if (ctx.trivia) {
     const scan = scanTrivia(input, cur, ctx)
@@ -31,15 +33,18 @@ function repItem<T>(
   // is trailing — roll it back for the enclosing context and stop.
   if (pos >= input.length) {
     if (raw) raw.length = mark
+    if (tlog) tlog.length = tmark
     return 'stop'
   }
   const result = parser.parse(input, pos, ctx)
   if (!result.ok) {
     if (raw) raw.length = mark
+    if (tlog) tlog.length = tmark
     return { fail: result }
   }
   if (result.span.end === pos) {
     if (raw) raw.length = mark
+    if (tlog) tlog.length = tmark
     return 'stop'
   }
   return { value: result.value, end: result.span.end }

@@ -217,15 +217,16 @@ describe('functional grammar — trivia via parser() under the macro', () => {
 describe('functional grammar — node() CST capture', () => {
   // Grammar: Pair = ident ':' Num ; with whitespace+comment trivia.
   const ws = trivia(oneOrMore(choice(regex(/[ \t\n]+/), regex(/\/\*(?:[^*]|\*(?!\/))*\*\//))))
-  const summarize = (children: readonly any[], raw: readonly any[]) => ({
+  const summarize = (children: readonly any[], raw: readonly any[], _s: any, tlog: readonly number[]) => ({
     ch: children.map(c => c._tag === 'node' ? `<${c.type}>` : c.value),
-    raw: raw.map(c => c._tag === 'trivia' ? `triv(${c.value})` : c._tag === 'node' ? `<${c.type}>` : c.value),
+    raw: raw.map(c => c._tag === 'node' ? `<${c.type}>` : (c as any).value),
+    tlog: Array.from(tlog),
   })
 
   const { Pair: interpPair } = rules<{ Pair: Combinator<any> }>(g => {
-    const Num = node('Num', regex(/[0-9]+/), (c, r, s) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r) }))
+    const Num = node('Num', regex(/[0-9]+/), (c, r, s, tl) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r, s, tl) }))
     const Pair = node('Pair', parser({ trivia: ws }, sequence(regex(/[a-z]+/), literal(':'), g.Num)),
-      (c, r, s) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r) }))
+      (c, r, s, tl) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r, s, tl) }))
     return { Pair, Num }
   })
 
@@ -233,9 +234,9 @@ describe('functional grammar — node() CST capture', () => {
 import { node, regex, literal, sequence, parser, trivia, oneOrMore, choice, rules } from 'parseman' with { type: 'macro' }
 const ws = trivia(oneOrMore(choice(regex(/[ \\t\\n]+/), regex(/\\/\\*(?:[^*]|\\*(?!\\/))*\\*\\//))))
 const { Pair } = rules(g => {
-  const Num = node('Num', regex(/[0-9]+/), (c, r, s) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r) }))
+  const Num = node('Num', regex(/[0-9]+/), (c, r, s, tl) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r, s, tl) }))
   const Pair = node('Pair', parser({ trivia: ws }, sequence(regex(/[a-z]+/), literal(':'), g.Num)),
-    (c, r, s) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r) }))
+    (c, r, s, tl) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r, s, tl) }))
   return { Pair, Num }
 })
 `.trim()
@@ -259,14 +260,21 @@ const { Pair } = rules(g => {
     })
   }
 
-  it('sub-node appears in children; trivia only in rawChildren', () => {
-    const r = parse(interpPair, 'a /*c*/ : 1')
+  it('sub-node appears in children; trivia in triviaLog (not rawChildren)', () => {
+    const input = 'a /*c*/ : 1'
+    const r = parse(interpPair, input)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    // children: the ident leaf, ':' leaf, and the <Num> sub-node — no trivia
+    // children: structural only — ident leaf, ':' leaf, <Num> sub-node
     expect(r.value.ch).toEqual(['a', ':', '<Num>'])
-    // rawChildren interleaves the trivia tokens
-    expect(r.value.raw).toEqual(['a', 'triv( )', 'triv(/*c*/)', 'triv( )', ':', 'triv( )', '<Num>'])
+    // rawChildren: structural only (no trivia objects)
+    expect(r.value.raw).toEqual(['a', ':', '<Num>'])
+    // triviaLog: [start, end, insertIdx] triples for each trivia run
+    // ' /*c*/ ' is at 1..8, before rawChildren[1] (':' at offset 8)
+    // ' ' is at 9..10, before rawChildren[2] (<Num> at offset 10)
+    expect(r.value.tlog).toEqual([1, 8, 1, 9, 10, 2])
+    expect(input.slice(r.value.tlog[0], r.value.tlog[1])).toBe(' /*c*/ ')
+    expect(input.slice(r.value.tlog[3], r.value.tlog[4])).toBe(' ')
   })
 })
 

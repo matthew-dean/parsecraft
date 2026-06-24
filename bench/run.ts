@@ -13,6 +13,7 @@
  *       OR: pnpm bench
  */
 import { parseJSON, jsonDoc } from '../examples/json/parser.ts'
+import { buildParsermanCSTJSON, buildParsermanCSTJSONNoTriv } from './parseman-cst-json.ts'
 import { parseCSV, compiledCSV, csvParser } from '../examples/csv/parser.ts'
 import { parseConfig, compiledConfig } from '../examples/toml-ish/parser.ts'
 import { parseGraphQL, graphqlDoc } from '../examples/graphql/parser.ts'
@@ -30,7 +31,9 @@ import { buildPeggyGraphQL } from './peggy-graphql.ts'
 // ---------------------------------------------------------------------------
 // Compiled parsers (built once, reused across bench runs)
 // ---------------------------------------------------------------------------
-const compiledJSON      = compile(jsonDoc)
+const parsermanCSTJSON       = buildParsermanCSTJSON()
+const parsermanCSTJSONNoTriv = buildParsermanCSTJSONNoTriv()
+const compiledJSON           = compile(jsonDoc)
 const compiledGraphQL   = compile(graphqlDoc)
 const chevrotainJSON    = buildChevrotainJSON()
 const chevrotainCSV     = buildChevrotainCSV()
@@ -186,6 +189,22 @@ function jsonGroup(label: string, input: string, iters: number) {
 jsonGroup('small',  SMALL_JSON,  50_000)
 jsonGroup('medium', MEDIUM_JSON, 10_000)
 jsonGroup('large',  LARGE_JSON,  2_000)
+
+// ---------------------------------------------------------------------------
+// CST JSON benchmarks — measures trivia-capture overhead vs Chevrotain CstParser
+// ---------------------------------------------------------------------------
+console.log('\n=== CST JSON parsing (warm) — interpreter, tree-building ===')
+
+function cstJsonGroup(label: string, input: string, iters: number) {
+  console.log(`\n  [${label}] ${input.length} bytes`)
+  bench('Parséman CST (with trivia)',    () => parsermanCSTJSON(input),       iters)
+  bench('Parséman CST (no trivia)',      () => parsermanCSTJSONNoTriv(input), iters)
+  bench('Chevrotain CST',                () => chevrotainJSON(input),         iters)
+}
+
+cstJsonGroup('small',  SMALL_JSON,  50_000)
+cstJsonGroup('medium', MEDIUM_JSON, 10_000)
+cstJsonGroup('large',  LARGE_JSON,  2_000)
 
 // ---------------------------------------------------------------------------
 // CSV warm-parse benchmarks

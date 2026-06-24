@@ -51,8 +51,14 @@ type Ctx = {
   capAsTrivia?: boolean
   /** Trivia parser → name of its capturing variant fn (separate from namedParsers). */
   triviaCaptureNames: Map<Combinator<unknown>, string>
+  /**
+   * Trivia parser → name of its fast number-returning variant fn (non-capturing
+   * mode). Returns the new position directly instead of a {ok,value,span} object,
+   * eliminating two object allocations per trivia skip.
+   */
+  triviaFnNames: Map<Combinator<unknown>, string>
   /** node() build functions captured at compile time (parallel to buildSrcs). */
-  buildFns: Array<(children: ReadonlyArray<unknown>, raw: ReadonlyArray<unknown>, span: { start: number; end: number }) => unknown>
+  buildFns: Array<(children: ReadonlyArray<unknown>, raw: ReadonlyArray<unknown>, span: { start: number; end: number }, triviaLog: readonly number[]) => unknown>
   /** Source text of each build fn (set from def.buildSrc; null when unavailable). */
   buildSrcs: Array<string | null>
   /**
@@ -73,11 +79,10 @@ function ind(ctx: Ctx): string { return '  '.repeat(ctx.indent) }
  */
 function emitLeafCapture(ctx: Ctx, valExpr: string, startExpr: string, endExpr: string): string[] {
   if (!ctx.capturing) return []
+  // Inside the trivia-capture fn, suppress leaf capture — the whole trivia run
+  // is recorded as a flat [start, end, insertIdx] triple by ensureTriviaCaptureFn.
+  if (ctx.capAsTrivia) return []
   const i = ind(ctx)
-  // Inside the trivia-capture fn, terminals are trivia tokens (rawChildren only).
-  if (ctx.capAsTrivia) {
-    return [`${i}if (_ctx._cstRawChildren) _ctx._cstRawChildren.push({ _tag: 'trivia', value: ${valExpr}, span: { start: ${startExpr}, end: ${endExpr} } })`]
-  }
   const lf = v(ctx, '_lf')
   return [
     `${i}if (_ctx._cstLeaves) {`,
@@ -90,9 +95,9 @@ function emitLeafCapture(ctx: Ctx, valExpr: string, startExpr: string, endExpr: 
 
 /**
  * Compile a capturing variant of the active trivia parser: `_tcN(input, pos, _ctx)`
- * pushes each whitespace/comment match into `_ctx._cstRawChildren` as a CSTTrivia
- * token and returns the position after the trivia (or `pos` if none). Built at
- * most once per trivia parser.
+ * records each trivia run as a flat [start, end, insertIdx] triple in
+ * `_ctx._cstTriviaLog` (zero object allocations) and returns the new position.
+ * Built at most once per trivia parser.
  */
 function ensureTriviaCaptureFn(ctx: Ctx): string {
   const trivia = ctx.activeTrivia!
@@ -117,6 +122,10 @@ function ensureTriviaCaptureFn(ctx: Ctx): string {
     `  _cap: {`,
     ...r.stmts,
     `    _e = ${r.endVar}`,
+    `  }`,
+    `  if (_e > _pos) {`,
+    `    if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(_pos, _e)`,
+    `    if (_ctx._cstTriviaLog !== undefined) _ctx._cstTriviaLog.push(_pos, _e, _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0)`,
     `  }`,
     `  return _e`,
     `}`,
@@ -279,33 +288,42 @@ function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: str
 }
 
 /**
- * Ensure the active trivia parser has a compiled named function, then return its name.
- * Uses namedParsers so the trivia function is compiled at most once per compile() call.
- * Mirrors the registration pattern in emitLazy.
+ * Ensure the active trivia parser has a fast number-returning compiled function,
+ * then return its name. Kept separate from namedParsers (which return {ok,value,span})
+ * so the two registries don't conflict if the same combinator appears in both roles.
+ *
+ * The generated function returns the new position as a number (or _pos unchanged on
+ * failure) — eliminating two object allocations per trivia skip vs. the old pattern.
  */
 function ensureTriviaFn(ctx: Ctx): string {
   const trivia = ctx.activeTrivia!
-  if (!ctx.namedParsers.has(trivia)) {
-    const fnName = `_pf${ctx.namedParsers.size}`
-    ctx.namedParsers.set(trivia, fnName)   // register FIRST to break any cycles
-    const savedIndent    = ctx.indent
-    const savedFailLabel = ctx.failLabel
-    const savedTrivia    = ctx.activeTrivia
-    ctx.indent    = 1
-    ctx.failLabel = undefined
-    delete ctx.activeTrivia  // trivia parser must not skip trivia within itself
-    const r = emit(trivia, ctx, '_pos')
-    ctx.indent    = savedIndent
-    ctx.failLabel = savedFailLabel
-    if (savedTrivia) ctx.activeTrivia = savedTrivia
-    ctx.namedFnDecls.push([
-      `function ${fnName}(input, _pos, _ctx) {`,
-      ...r.stmts,
-      `  return { ok: true, value: ${r.valueVar}, span: { start: _pos, end: ${r.endVar} } }`,
-      `}`,
-    ].join('\n'))
-  }
-  return ctx.namedParsers.get(trivia)!
+  const existing = ctx.triviaFnNames.get(trivia)
+  if (existing) return existing
+  const fnName = `_tf${ctx.triviaFnNames.size}`
+  ctx.triviaFnNames.set(trivia, fnName)
+
+  const savedIndent    = ctx.indent
+  const savedFailLabel = ctx.failLabel
+  const savedTrivia    = ctx.activeTrivia
+  ctx.indent    = 2
+  ctx.failLabel = '_triv'
+  delete ctx.activeTrivia  // trivia parser must not skip trivia within itself
+  const r = emit(trivia, ctx, '_pos')
+  ctx.indent    = savedIndent
+  ctx.failLabel = savedFailLabel
+  if (savedTrivia) ctx.activeTrivia = savedTrivia
+
+  ctx.namedFnDecls.push([
+    `function ${fnName}(input, _pos, _ctx) {`,
+    `  let _e = _pos`,
+    `  _triv: {`,
+    ...r.stmts,
+    `    _e = ${r.endVar}`,
+    `  }`,
+    `  return _e`,
+    `}`,
+  ].join('\n'))
+  return fnName
 }
 
 function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER {
@@ -327,11 +345,7 @@ function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: st
         stmts.push(`${ind(ctx)}${curV} = ${capFn}(input, ${curV}, _ctx)`)
       } else {
         const trivFn = ensureTriviaFn(ctx)
-        const tmp = v(ctx, '_trv')
-        stmts.push(
-          `${ind(ctx)}const ${tmp} = ${trivFn}(input, ${curV}, _ctx)`,
-          `${ind(ctx)}if (${tmp}.ok) ${curV} = ${tmp}.span.end`,
-        )
+        stmts.push(`${ind(ctx)}${curV} = ${trivFn}(input, ${curV}, _ctx)`)
       }
     }
     const r = emit(def.parsers[i]!, ctx, curV)
@@ -476,28 +490,26 @@ function emitLiteralsLongestFirst(
 }
 
 // ── firstMatch fallback: PEG + auto-not inline rejection + per-arm gates ─────
+// Uses labeled blocks (emitFallible) instead of IIFE+try/catch to avoid V8
+// deoptimization from exception-based control flow.
 function emitFirstMatch(
   def: Extract<ParserDef, { tag: 'choice' }>,
   allExpected: string,
   ctx: Ctx,
   pos: string,
 ): ER {
-  const resV = v(ctx, '_cr')
-  const stmts: string[] = [`${ind(ctx)}let ${resV}`]
+  const resValV = v(ctx, '_crv')
+  const resEndV = v(ctx, '_cre')
+  const resOkV  = v(ctx, '_crok')
+  const ind0 = ind(ctx)
+  const stmts: string[] = [
+    `${ind0}let ${resValV}, ${resEndV} = ${pos}, ${resOkV} = false`,
+  ]
 
   for (let i = 0; i < def.parsers.length; i++) {
     const p = def.parsers[i]!
     const gate    = def.gates[i]
     const autoNot = def.autoNot[i]
-
-    const savedIndent   = ctx.indent
-    const savedFailLabel = ctx.failLabel
-    ctx.indent    = 0
-    ctx.failLabel = undefined  // branches go into IIFEs; break can't cross IIFE boundary
-    const r = emit(p, ctx, pos)
-    ctx.indent    = savedIndent
-    ctx.failLabel = savedFailLabel
-    const iife = asIIFE(r.stmts, r.valueVar, r.endVar, pos, ind(ctx))
 
     // Gate: register predicate in mapFns; condition guards entire arm attempt
     let gateCond: string | null = null
@@ -506,7 +518,7 @@ function emitFirstMatch(
       ctx.mapFns.push(gate as (v: unknown, span: unknown) => unknown)
       gateCond = `_mf[${gateIdx}](_ctx.state)`
     }
-    const skipCond = gateCond ? `!${resV}?.ok && ${gateCond}` : `!${resV}?.ok`
+    const skipCond = gateCond ? `!${resOkV} && ${gateCond}` : `!${resOkV}`
 
     // In capturing mode, save leaf-array lengths before the arm so we can roll
     // back any leaves pushed by a failed or auto-not-rejected arm.
@@ -515,40 +527,41 @@ function emitFirstMatch(
     const rollback   = markLeaves
       ? `if (_ctx._cstLeaves) _ctx._cstLeaves.length = ${markLeaves}; if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markRaw}`
       : ''
-    const markStmts  = markLeaves
-      ? [`${ind(ctx)}  const ${markLeaves} = _ctx._cstLeaves?.length ?? 0`,
-         `${ind(ctx)}  const ${markRaw} = _ctx._cstRawChildren?.length ?? 0`]
-      : []
-    const rollbackStmt = rollback
-      ? `${ind(ctx)}  if (!${resV}?.ok) { ${rollback} }`
-      : ''
+
+    stmts.push(`${ind0}if (${skipCond}) {`)
+
+    // Bump indent so emitFallible's labeled block sits inside the `if` body
+    ctx.indent++
+    const ind1 = ind(ctx)
+    if (markLeaves) {
+      stmts.push(
+        `${ind1}const ${markLeaves} = _ctx._cstLeaves?.length ?? 0`,
+        `${ind1}const ${markRaw} = _ctx._cstRawChildren?.length ?? 0`,
+      )
+    }
+    const { stmts: armStmts, okVar, valVar, endVar } = emitFallible(p, ctx, pos)
+    stmts.push(...armStmts)
+    ctx.indent--
 
     if (autoNot && autoNot.length > 0) {
-      const tmp = v(ctx, '_ct')
       const anCode = v(ctx, '_anc')
       const rejectCond = autoNot.map(check =>
         check.kind === 'firstSet'
           ? firstSetCond(anCode, check.set)
-          : `input.startsWith(${JSON.stringify(check.value)}, ${tmp}.span.end)`
+          : `input.startsWith(${JSON.stringify(check.value)}, ${endVar})`
       ).join(' || ')
-      stmts.push(`${ind(ctx)}if (${skipCond}) {`)
-      stmts.push(...markStmts)
       stmts.push(
-        `${ind(ctx)}  const ${tmp} = (() => { try { return ${iife} } catch {} })()`,
-        `${ind(ctx)}  if (${tmp}?.ok) { const ${anCode} = ${tmp}.span.end < input.length ? input.charCodeAt(${tmp}.span.end) : -1; if (!(${rejectCond})) ${resV} = ${tmp} }`,
+        `${ind0}  if (${okVar}) { const ${anCode} = ${endVar} < input.length ? input.charCodeAt(${endVar}) : -1; if (!(${rejectCond})) { ${resValV} = ${valVar}; ${resEndV} = ${endVar}; ${resOkV} = true } }`,
       )
-      if (rollbackStmt) stmts.push(rollbackStmt)
-      stmts.push(`${ind(ctx)}}`)
+      if (rollback) stmts.push(`${ind0}  if (!${resOkV}) { ${rollback} }`)
     } else {
-      stmts.push(`${ind(ctx)}if (${skipCond}) {`)
-      stmts.push(...markStmts)
-      stmts.push(`${ind(ctx)}  try { ${resV} = ${iife} } catch {}`)
-      if (rollbackStmt) stmts.push(rollbackStmt)
-      stmts.push(`${ind(ctx)}}`)
+      stmts.push(`${ind0}  if (${okVar}) { ${resValV} = ${valVar}; ${resEndV} = ${endVar}; ${resOkV} = true }`)
+      if (rollback) stmts.push(`${ind0}  else { ${rollback} }`)
     }
+    stmts.push(`${ind0}}`)
   }
-  stmts.push(`${ind(ctx)}if (!${resV}?.ok) ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`)
-  return { stmts, valueVar: `${resV}.value`, endVar: `${resV}.span.end` }
+  stmts.push(`${ind0}if (!${resOkV}) ${failArr({ ...ctx, indent: 0 }, allExpected, pos)}`)
+  return { stmts, valueVar: resValV, endVar: resEndV }
 }
 
 function emitNonDisjoint(
@@ -635,20 +648,19 @@ function emitMany(def: Extract<ParserDef, { tag: 'many' | 'oneOrMore' }>, ctx: C
     if (ctx.capturing) {
       const capFn = ensureTriviaCaptureFn(ctx)
       const markV = v(ctx, '_mk')
+      const markTl = v(ctx, '_mktl')
       const npV = v(ctx, '_np')
       stmts.push(
         `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
+        `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
         `${ind(ctx)}const ${npV} = ${capFn}(input, ${curV}, _ctx)`,
       )
       itemPos = npV
-      rollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; `
+      rollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; `
     } else {
       const trivFn = ensureTriviaFn(ctx)
       const npV = v(ctx, '_np')
-      stmts.push(
-        `${ind(ctx)}let ${npV} = ${curV}`,
-        `${ind(ctx)}{ const _trv = ${trivFn}(input, ${npV}, _ctx); if (_trv.ok) ${npV} = _trv.span.end }`,
-      )
+      stmts.push(`${ind(ctx)}const ${npV} = ${trivFn}(input, ${curV}, _ctx)`)
       itemPos = npV
     }
   }
@@ -708,8 +720,12 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
   let rollback = ''
   if (ctx.capturing) {
     const markV = v(ctx, '_mk')
-    stmts.push(`${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`)
-    rollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; `
+    const markTl = v(ctx, '_mktl')
+    stmts.push(
+      `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
+      `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
+    )
+    rollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; `
   }
 
   let sepAtPos = curV
@@ -722,10 +738,7 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
     } else {
       const trivFn = ensureTriviaFn(ctx)
       const spV = v(ctx, '_sp')
-      stmts.push(
-        `${ind(ctx)}let ${spV} = ${curV}`,
-        `${ind(ctx)}{ const _trv = ${trivFn}(input, ${spV}, _ctx); if (_trv.ok) ${spV} = _trv.span.end }`,
-      )
+      stmts.push(`${ind(ctx)}const ${spV} = ${trivFn}(input, ${curV}, _ctx)`)
       sepAtPos = spV
     }
   }
@@ -743,10 +756,7 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
     } else {
       const trivFn = ensureTriviaFn(ctx)
       const npV = v(ctx, '_np')
-      stmts.push(
-        `${ind(ctx)}let ${npV} = ${sepEnd}`,
-        `${ind(ctx)}{ const _trv = ${trivFn}(input, ${npV}, _ctx); if (_trv.ok) ${npV} = _trv.span.end }`,
-      )
+      stmts.push(`${ind(ctx)}const ${npV} = ${trivFn}(input, ${sepEnd}, _ctx)`)
       nextAtPos = npV
     }
   }
@@ -859,26 +869,27 @@ function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: strin
 
   const chV = v(ctx, '_ch')
   const rawV = v(ctx, '_raw')
+  const tlV = v(ctx, '_tl')
   // Save the caller's collectors, install this node's, parse, then restore —
   // capture flows through _ctx so it crosses ref/named-fn boundaries. The inner
   // runs inside a labeled block (emitFallible) so the collectors are restored on
   // BOTH success and failure — otherwise a failed alternative in a choice would
   // leave _ctx pointing at its discarded array and the next alternative would
   // capture into the wrong place.
-  const sc = v(ctx, '_sc'), sl = v(ctx, '_sl'), sr = v(ctx, '_sr'), st = v(ctx, '_st')
+  const sc = v(ctx, '_sc'), sl = v(ctx, '_sl'), sr = v(ctx, '_sr'), st = v(ctx, '_st'), stl = v(ctx, '_stl')
   const stmts: string[] = [
-    `${i}const ${chV} = [], ${rawV} = []`,
-    `${i}const ${sc} = _ctx._cstChildren, ${sl} = _ctx._cstLeaves, ${sr} = _ctx._cstRawChildren, ${st} = _ctx.captureTrivia`,
-    `${i}_ctx._cstChildren = ${chV}; _ctx._cstLeaves = ${chV}; _ctx._cstRawChildren = ${rawV}; _ctx.captureTrivia = true`,
+    `${i}const ${chV} = [], ${rawV} = [], ${tlV} = []`,
+    `${i}const ${sc} = _ctx._cstChildren, ${sl} = _ctx._cstLeaves, ${sr} = _ctx._cstRawChildren, ${st} = _ctx.captureTrivia, ${stl} = _ctx._cstTriviaLog`,
+    `${i}_ctx._cstChildren = ${chV}; _ctx._cstLeaves = ${chV}; _ctx._cstRawChildren = ${rawV}; _ctx.captureTrivia = true; _ctx._cstTriviaLog = ${tlV}`,
   ]
   const { stmts: innerStmts, okVar, endVar } = emitFallible(def.parser, ctx, pos)
   stmts.push(...innerStmts)
-  stmts.push(`${i}_ctx._cstChildren = ${sc}; _ctx._cstLeaves = ${sl}; _ctx._cstRawChildren = ${sr}; _ctx.captureTrivia = ${st}`)
+  stmts.push(`${i}_ctx._cstChildren = ${sc}; _ctx._cstLeaves = ${sl}; _ctx._cstRawChildren = ${sr}; _ctx.captureTrivia = ${st}; _ctx._cstTriviaLog = ${stl}`)
   stmts.push(`${i}if (!${okVar}) ${failStmt({ ...ctx, indent: 0 }, '"node"', pos).trim()}`)
 
   const ndV = v(ctx, '_nd')
   stmts.push(
-    `${i}const ${ndV} = _build[${fnIdx}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} })`,
+    `${i}const ${ndV} = _build[${fnIdx}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV})`,
     // Record into the caller's collectors (the node in children; the node, or a
     // spanned leaf if build collapsed to a non-node value, in rawChildren).
     `${i}if (${sc}) ${sc}.push(${ndV})`,
@@ -934,15 +945,19 @@ function emitLazy(p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'lazy' 
     const savedIndent    = ctx.indent
     const savedFailLabel = ctx.failLabel
     ctx.indent    = 1
-    ctx.failLabel = undefined
+    ctx.failLabel = '_pfail'  // failures break _pfail (labeled block in fn body)
     const r = emit(resolved, ctx, '_pos')
     ctx.indent    = savedIndent
     ctx.failLabel = savedFailLabel
 
     ctx.namedFnDecls.push([
       `function ${fnName}(input, _pos, _ctx) {`,
+      `  let _pfok = false, _pfv, _pfe = _pos`,
+      `  _pfail: {`,
       ...r.stmts,
-      `  return { ok: true, value: ${r.valueVar}, span: { start: _pos, end: ${r.endVar} } }`,
+      `  _pfv = ${r.valueVar}; _pfe = ${r.endVar}; _pfok = true`,
+      `  }`,
+      `  return _pfok ? [_pfv, _pfe] : null`,
       `}`,
     ].join('\n'))
   }
@@ -954,9 +969,9 @@ function emitLazy(p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'lazy' 
   return {
     stmts: [
       `${ind(ctx)}const ${rv} = ${fnName}(input, ${pos}, _ctx)`,
-      `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"parser"', pos).trim()}`,
-      `${ind(ctx)}const ${vv} = ${rv}.value`,
-      `${ind(ctx)}const ${ev} = ${rv}.span.end`,
+      `${ind(ctx)}if (!${rv}) ${failStmt({ ...ctx, indent: 0 }, '"parser"', pos).trim()}`,
+      `${ind(ctx)}const ${vv} = ${rv}[0]`,
+      `${ind(ctx)}const ${ev} = ${rv}[1]`,
     ],
     valueVar: vv,
     endVar: ev,
@@ -1088,14 +1103,18 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
         const savedIndent    = ctx.indent
         const savedFailLabel = ctx.failLabel
         ctx.indent    = 1
-        ctx.failLabel = undefined  // named functions have their own scope; break can't cross
+        ctx.failLabel = '_pfail'  // failures break _pfail (same as emitLazy)
         const innerR = emit(innerParser, ctx, '_pos')
         ctx.indent    = savedIndent
         ctx.failLabel = savedFailLabel
         ctx.namedFnDecls.push([
           `function ${fnName}(input, _pos, _ctx) {`,
+          `  let _pfok = false, _pfv, _pfe = _pos`,
+          `  _pfail: {`,
           ...innerR.stmts,
-          `  return { ok: true, value: ${innerR.valueVar}, span: { start: _pos, end: ${innerR.endVar} } }`,
+          `  _pfv = ${innerR.valueVar}; _pfe = ${innerR.endVar}; _pfok = true`,
+          `  }`,
+          `  return _pfok ? [_pfv, _pfe] : null`,
           `}`,
         ].join('\n'))
       }
@@ -1107,9 +1126,9 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
       return {
         stmts: [
           `${ind(ctx)}const ${rv} = ${fn}(input, ${pos}, { ..._ctx, state: _mf[${evIdx}]() })`,
-          `${ind(ctx)}if (!${rv}.ok) ${failStmt({ ...ctx, indent: 0 }, '"withCtx"', pos).trim()}`,
-          `${ind(ctx)}const ${vv} = ${rv}.value`,
-          `${ind(ctx)}const ${ev} = ${rv}.span.end`,
+          `${ind(ctx)}if (!${rv}) ${failStmt({ ...ctx, indent: 0 }, '"withCtx"', pos).trim()}`,
+          `${ind(ctx)}const ${vv} = ${rv}[0]`,
+          `${ind(ctx)}const ${ev} = ${rv}[1]`,
         ],
         valueVar: vv,
         endVar: ev,
@@ -1186,6 +1205,7 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
     needsCollator: false,
     namedParsers: new Map(),
     triviaCaptureNames: new Map(),
+    triviaFnNames: new Map(),
     namedFnDecls: [],
     capturing: hasNodeDef(parser as Combinator<unknown>),
   }

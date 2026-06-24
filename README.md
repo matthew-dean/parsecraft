@@ -142,6 +142,29 @@ Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMor
 
 ---
 
+## Performance: collapse opaque shapes into one regex
+
+The single biggest grammar-level perf lever is **the number of combinator boundaries on the hot path**. Every `sequence` / `regex` / `oneOrMore` step is a function call plus a result-object allocation plus — in a `node()` rule — a leaf push. Fewer, fatter combinators beat many thin ones.
+
+Measured on a repeated 3-shape group (`name1 1px #111 …`, ~29 KB), parsing the same content three ways:
+
+| Approach | Interpreted | Compiled |
+|---|---|---|
+| `oneOrMore(sequence(ident, sp, num, sp, hex, sp))` | 0.289 ms | 0.167 ms |
+| same, with **inline** `regex(…)` instead of shared refs | 0.281 ms | 0.183 ms |
+| **one** `regex(/…ident…num…hex…/)` per group | **0.055 ms** | **0.042 ms** |
+
+Two takeaways:
+
+- **Shared combinator ref vs inline `regex(…)` literal makes no difference.** Both produce the identical runtime structure (one `regex` combinator either way), and the compiler inlines a `regex` test at every use site regardless of sharing — there's no function-call indirection to eliminate (that only exists for `ref()` / `rules()` entries). Factor out shared terminals for readability; it costs nothing.
+- **Collapsing a fixed multi-token shape into a single `regex` is 4–5× faster** in both the interpreter and compiled output, because it erases the per-step call + allocation overhead. `compile()` is a real but smaller win (~1.7×) and **stacks** with collapsing.
+
+**When to collapse:** only where the CST treats the group as opaque text — a dimension `\d+px`, a hex color, an `nth` expression, a simple ident-run. A single regex yields **one leaf**, not structured sub-nodes.
+
+**When NOT to collapse:** keep the parts as separate combinators wherever the builder needs them as distinct CST children — for per-field source spans (`fieldSpans`/`valueSpans`), for trivia recovered *between* the parts, or for distinct typed nodes. Correctness first; collapse only the genuinely opaque runs.
+
+---
+
 ## Whitespace and comment skipping
 
 Wrap your root combinator with `parser()` to declare trivia — whitespace and comments to skip between tokens. This bakes the setting into the combinator tree so all modes (interpreter, `compile()`, macro build) behave identically:

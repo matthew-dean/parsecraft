@@ -1,18 +1,17 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
 
 /**
- * A CST/AST node rule. Runs `parser` while collecting its terminals (and, when
- * trivia capture is on, the trivia between them) into `children` / `rawChildren`
- * arrays, then calls `build(children, rawChildren, span)` to produce the node.
- *
- * This is the functional replacement for the class `Parser`'s capital-letter
- * rules + `buildNode`: capture is owned by the library (here and in the
- * compiler), so grammar authors don't hand-wrap terminals or reconstruct trivia.
+ * A CST/AST node rule. Runs `parser` while collecting its terminals into
+ * `children` / `rawChildren` arrays and trivia spans into `triviaLog`, then
+ * calls `build(children, rawChildren, span, triviaLog)` to produce the node.
  *
  *   - `children`    — structural items in source order: spanned CSTLeaf terminals
  *                     and sub-nodes (whatever `build` returned for inner nodes).
- *   - `rawChildren` — the same, plus CSTTrivia tokens for trivia consumed between
- *                     terms (only when the parse runs with `captureTrivia`).
+ *   - `rawChildren` — structural children only (same items as `children`).
+ *   - `triviaLog`   — flat `[start, end, insertIdx, ...]` triples for trivia runs
+ *                     consumed between terms. `insertIdx` is the rawChildren index
+ *                     before which the trivia was consumed. Use `buildTriviaIndex`
+ *                     to turn this into a before/after lookup table.
  *
  * If `build` returns a non-node value (e.g. a bare string for a collapsed rule),
  * the parent records it as a spanned leaf so its source span is still recoverable.
@@ -21,7 +20,10 @@ export type BuildNode<N> = (
   children: ReadonlyArray<unknown>,
   rawChildren: ReadonlyArray<unknown>,
   span: { start: number; end: number },
+  triviaLog: readonly number[],
 ) => N
+
+const _EMPTY: readonly number[] = Object.freeze([])
 
 export function node<N>(type: string, parser: Combinator<unknown>, build: BuildNode<N>): Combinator<N> {
   const meta: ParserMeta = {
@@ -36,19 +38,19 @@ export function node<N>(type: string, parser: Combinator<unknown>, build: BuildN
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<N> {
       const children: unknown[] = []
       const rawChildren: unknown[] = []
+      const triviaLog: number[] = []
       const innerCtx: ParseContext = {
         ...ctx,
-        // A node() always records the trivia between its terms — the library owns
-        // capture so grammar authors don't reconstruct it. (Matches the compiler.)
         captureTrivia: true,
         _cstChildren: children,
         _cstLeaves: children,
         _cstRawChildren: rawChildren,
+        _cstTriviaLog: triviaLog,
       }
       const r = parser.parse(input, pos, innerCtx)
       if (!r.ok) return r
 
-      const built = build(children, rawChildren, r.span)
+      const built = build(children, rawChildren, r.span, triviaLog)
       const isNodeLike = typeof built === 'object' && built !== null && (built as { _tag?: string })._tag === 'node'
       if (ctx._cstChildren) (ctx._cstChildren as unknown[]).push(built)
       if (ctx._cstRawChildren) {

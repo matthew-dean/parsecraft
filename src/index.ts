@@ -4,7 +4,7 @@ export { literal } from './combinators/literal.ts'
 export type { LiteralOptions } from './combinators/literal.ts'
 
 export { regex } from './combinators/regex.ts'
-export { keywords } from './combinators/keywords.ts'
+export { keywords, word, wordContext } from './combinators/keywords.ts'
 export type { KeywordsOptions } from './combinators/keywords.ts'
 
 export { sequence } from './combinators/sequence.ts'

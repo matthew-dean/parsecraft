@@ -12,6 +12,34 @@ export type KeywordsOptions = {
   boundary?: string
 }
 
+/**
+ * Match a single keyword with an automatic word-boundary guard. Prevents
+ * matching `true` inside `trueish`. The boundary defaults to `_0-9A-Za-z`,
+ * which covers most programming-language identifiers.
+ *
+ *   word('true')              // matches "true" but not "trueish"
+ *   word('color', 'A-Za-z-') // CSS-style identifier boundary
+ */
+export function word(str: string, boundary = '_0-9A-Za-z'): Combinator<string> {
+  return keywords([str], { boundary })
+}
+
+/**
+ * Create a language-specific keyword factory that bakes in the identifier
+ * boundary once. Call the returned function to produce each keyword combinator.
+ * The factory itself is a definition-time construct — it produces plain
+ * Combinators and leaves no trace in the compiled output.
+ *
+ *   const kw = wordContext()                    // default: '_0-9A-Za-z'
+ *   const cssKw = wordContext('A-Za-z0-9_-')    // CSS identifiers allow dashes
+ *
+ *   const query  = kw('query')   // Combinator<string>
+ *   const color  = cssKw('color') // matches "color" but not "color-scheme"
+ */
+export function wordContext(boundary = '_0-9A-Za-z'): (str: string) => Combinator<string> {
+  return (str: string) => keywords([str], { boundary })
+}
+
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

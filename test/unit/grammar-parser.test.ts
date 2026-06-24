@@ -373,10 +373,10 @@ describe('Parser — CSS-style scanner', () => {
 })
 
 // ---------------------------------------------------------------------------
-// rawChildren — trivia visibility in buildNode
+// rawChildren / triviaLog — trivia visibility in buildNode
 // ---------------------------------------------------------------------------
-describe('Parser — rawChildren in buildNode', () => {
-  type RichNode = { _tag: 'node'; type: string; span: Span; state: unknown; children: CSTChild[]; rawChildren: CSTRawChild[] }
+describe('Parser — rawChildren/triviaLog in buildNode', () => {
+  type RichNode = { _tag: 'node'; type: string; span: Span; state: unknown; children: CSTChild[]; rawChildren: CSTRawChild[]; triviaLog: readonly number[] }
   type CSTChild = CSTNode | CSTLeaf | CSTError
 
   class SelectorParser extends Parser<RichNode> {
@@ -386,49 +386,51 @@ describe('Parser — rawChildren in buildNode', () => {
     Ident     = (g: Refs<SelectorParser>) => g.ident
     Selectors = (g: Refs<SelectorParser>) => sequence(g.Ident, g.Ident)
 
-    protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
-      return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren] }
+    protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>, triviaLog: readonly number[]): RichNode {
+      return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren], triviaLog }
     }
   }
 
   const ws = regex(/\s+/)
   const g  = new SelectorParser()
 
-  it('children never contains trivia, rawChildren does', () => {
+  it('children never contains trivia; triviaLog holds trivia spans', () => {
     // Parse with global trivia so the whitespace is auto-skipped between Ident Ident
     const r = parser({ trivia: ws, captureTrivia: true }, g.rule('Selectors')).parse('div p')
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.children.every(c => c._tag !== 'trivia')).toBe(true)
-    const trivia = r.value.rawChildren.filter((c): c is CSTTrivia => c._tag === 'trivia')
-    expect(trivia.length).toBe(1)
-    expect(trivia[0]!.value).toBe(' ')
+    // triviaLog has [start, end, insertIdx] per trivia run
+    expect(r.value.triviaLog.length).toBe(3)
+    const [start, end] = r.value.triviaLog
+    expect('div p'.slice(start, end)).toBe(' ')
   })
 
-  it('rawChildren has trivia interleaved between structural nodes', () => {
+  it('rawChildren has structural nodes only; triviaLog encodes position', () => {
     const r = parser({ trivia: ws, captureTrivia: true }, g.rule('Selectors')).parse('foo   bar')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    // [Ident(foo), CSTTrivia("   "), Ident(bar)]
+    // rawChildren: [Ident(foo), Ident(bar)] — no trivia object
+    expect(r.value.rawChildren.length).toBe(2)
     expect(r.value.rawChildren[0]!._tag).toBe('node')
-    expect(r.value.rawChildren[1]!._tag).toBe('trivia')
-    expect((r.value.rawChildren[1] as CSTTrivia).value).toBe('   ')
-    expect(r.value.rawChildren[2]!._tag).toBe('node')
+    expect(r.value.rawChildren[1]!._tag).toBe('node')
+    // triviaLog: [3, 6, 1] — trivia from 3..6, before rawChildren[1]
+    expect(r.value.triviaLog).toEqual([3, 6, 1])
+    expect('foo   bar'.slice(r.value.triviaLog[0]!, r.value.triviaLog[1]!)).toBe('   ')
   })
 
-  it('no trivia node when terms are adjacent (no whitespace)', () => {
+  it('triviaLog is empty when terms are adjacent (no whitespace)', () => {
     class PairParser extends Parser<RichNode> {
       ident = regex(/[a-zA-Z]+/)
       Pair  = (g: Refs<PairParser>) => sequence(g.ident, literal(':'), g.ident)
-      protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>): RichNode {
-        return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren] }
+      protected buildNode(type: string, span: Span, children: ReadonlyArray<RichNode | CSTLeaf | CSTError>, state: unknown, rawChildren: ReadonlyArray<CSTRawChild>, triviaLog: readonly number[]): RichNode {
+        return { _tag: 'node', type, span, state, children: children as CSTChild[], rawChildren: [...rawChildren], triviaLog }
       }
     }
     const p = new PairParser()
     const r = parser({ trivia: ws }, p.rule('Pair')).parse('color:red')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const triviaNodes = r.value.rawChildren.filter(c => c._tag === 'trivia')
-    expect(triviaNodes.length).toBe(0)
+    expect(r.value.triviaLog.length).toBe(0)
   })
 })
