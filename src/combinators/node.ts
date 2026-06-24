@@ -1,4 +1,5 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
+import { beginCstNodeCapture, endCstNodeCapture, pushCstChild } from '../cst/capture-buffer.ts'
 
 /**
  * A CST/AST node rule. Runs `parser` while collecting its terminals into
@@ -34,39 +35,19 @@ export function node<N>(type: string, parser: Combinator<unknown>, build: BuildN
     _meta: meta,
     _def: { tag: 'node', type, parser, build },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<N> {
-      const children: unknown[] = []
-      const rawChildren: unknown[] = []
-      const triviaLog: number[] = []
-
-      // Save/restore ctx fields instead of spreading to avoid one object allocation per node() call.
-      const sCh  = ctx._cstChildren
-      const sLv  = ctx._cstLeaves
-      const sRaw = ctx._cstRawChildren
-      const sTl  = ctx._cstTriviaLog
-      const sCap = ctx.captureTrivia
-      ctx._cstChildren    = children
-      ctx._cstLeaves      = children
-      ctx._cstRawChildren = rawChildren
-      ctx._cstTriviaLog   = triviaLog
-      ctx.captureTrivia   = true
-
+      const saved = beginCstNodeCapture(ctx)
       const r = parser.parse(input, pos, ctx)
-
-      ctx._cstChildren    = sCh
-      ctx._cstLeaves      = sLv
-      ctx._cstRawChildren = sRaw
-      ctx._cstTriviaLog   = sTl
-      ctx.captureTrivia   = sCap
+      const { children, rawChildren, triviaLog } = endCstNodeCapture(ctx, saved)
 
       if (!r.ok) return r
 
       const built = build(children, rawChildren, r.span, triviaLog)
       const isNodeLike = typeof built === 'object' && built !== null && (built as { _tag?: string })._tag === 'node'
-      if (sCh)  sCh.push(built)
-      if (sRaw) {
-        sRaw.push(
-          isNodeLike ? built : { _tag: 'leaf', value: typeof built === 'string' ? built : '', span: r.span }
-        )
+      const rawEntry = isNodeLike
+        ? built
+        : { _tag: 'leaf', value: typeof built === 'string' ? built : '', span: r.span }
+      if (saved.buf !== undefined || saved.ch !== undefined) {
+        pushCstChild(ctx, built, rawEntry)
       }
       return { ok: true, value: built, span: r.span }
     },

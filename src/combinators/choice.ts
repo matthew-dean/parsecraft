@@ -3,6 +3,7 @@ import type {
   AutoNotCheck, CharRange, ChoiceStrategy, GatedArm,
 } from '../types.ts'
 import { union, intersects } from './first-set.ts'
+import { saveCstMark, rollbackCstCapture } from '../cst/capture-buffer.ts'
 
 type ArmParser<T> = T extends GatedArm<infer U> ? Combinator<U> : T extends Combinator<infer U> ? Combinator<U> : never
 type UnionArms<T extends (Combinator<unknown> | GatedArm<unknown>)[]> = {
@@ -120,25 +121,19 @@ export function choice<T extends [Combinator<unknown> | GatedArm<unknown>, ...(C
       for (let i = 0; i < parsers.length; i++) {
         if (gates[i] && !gates[i]!(ctx.state)) continue   // gate blocks this arm
         // Save leaf-array lengths so a failed/rejected arm can be rolled back.
-        const leavesLen = ctx._cstLeaves?.length
-        const rawLen    = ctx._cstRawChildren?.length
-        const tlLen     = ctx._cstTriviaLog?.length
-        const logLen    = ctx._triviaLog?.length
+        const mark = saveCstMark(ctx)
+        const logLen = ctx._triviaLog?.length
         const result = parsers[i]!.parse(input, pos, ctx)
         if (!result.ok) {
-          if (leavesLen !== undefined && ctx._cstLeaves) ctx._cstLeaves.length = leavesLen
-          if (rawLen    !== undefined && ctx._cstRawChildren) ctx._cstRawChildren.length = rawLen
-          if (tlLen     !== undefined && ctx._cstTriviaLog) ctx._cstTriviaLog.length = tlLen
-          if (logLen    !== undefined && ctx._triviaLog) ctx._triviaLog.length = logLen
+          rollbackCstCapture(ctx, mark)
+          if (logLen !== undefined && ctx._triviaLog) ctx._triviaLog.length = logLen
           expected.push(...result.expected)
           continue
         }
         const checks = autoNot[i]
         if (checks && autoNotFires(input, result.span.end, checks)) {
-          if (leavesLen !== undefined && ctx._cstLeaves) ctx._cstLeaves.length = leavesLen
-          if (rawLen    !== undefined && ctx._cstRawChildren) ctx._cstRawChildren.length = rawLen
-          if (tlLen     !== undefined && ctx._cstTriviaLog) ctx._cstTriviaLog.length = tlLen
-          if (logLen    !== undefined && ctx._triviaLog) ctx._triviaLog.length = logLen
+          rollbackCstCapture(ctx, mark)
+          if (logLen !== undefined && ctx._triviaLog) ctx._triviaLog.length = logLen
           continue
         }
         return result as ParseResult<UnionArms<T>>

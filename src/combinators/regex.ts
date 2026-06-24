@@ -2,6 +2,7 @@ import regexpTree from 'regexp-tree'
 import type { Combinator, ParseContext, ParseResult, ParserMeta, FirstSet } from '../types.ts'
 import { any, fromRange, union, empty } from './first-set.ts'
 import { failAt } from './probe.ts'
+import { pushCstLeaf, cstCaptureActive } from '../cst/capture-buffer.ts'
 
 function firstSetFromRegex(pattern: string): { firstSet: FirstSet; canMatchNewline: boolean } {
   try {
@@ -145,8 +146,7 @@ export function regex(pattern: string | RegExp, flags = ''): Combinator<string> 
       }
       const span = { start: pos, end: pos + m[0]!.length }
       const leaf = { _tag: 'leaf', value: m[0]!, span }
-      if (ctx._cstLeaves) (ctx._cstLeaves as typeof leaf[]).push(leaf)
-      if (ctx._cstRawChildren) (ctx._cstRawChildren as typeof leaf[]).push(leaf)
+      if (cstCaptureActive(ctx)) pushCstLeaf(ctx, leaf)
       return { ok: true, value: m[0]!, span }
     },
   }

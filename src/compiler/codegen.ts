@@ -122,7 +122,6 @@ function emitNamedFnCall(ctx: Ctx, fnName: string, pos: string, failExpected: st
  */
 function emitLeafCapture(ctx: Ctx, valExpr: string, startExpr: string, endExpr: string): string[] {
   if (!ctx.capturing) return []
-  // Inside the trivia fn, suppress leaf capture — trivia runs are logged via _cap.
   if (ctx.capAsTrivia) return []
   const i = ind(ctx)
   const lf = v(ctx, '_lf')
@@ -606,7 +605,6 @@ function emitFirstMatch(
 
     stmts.push(`${ind0}if (${skipCond}) {`)
 
-    // Bump indent so emitFallible's labeled block sits inside the `if` body
     ctx.indent++
     const ind1 = ind(ctx)
     if (markLeaves) {
@@ -959,12 +957,6 @@ function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: strin
   const chV = v(ctx, '_ch')
   const rawV = v(ctx, '_raw')
   const tlV = v(ctx, '_tl')
-  // Save the caller's collectors, install this node's, parse, then restore —
-  // capture flows through _ctx so it crosses ref/named-fn boundaries. The inner
-  // runs inside a labeled block (emitFallible) so the collectors are restored on
-  // BOTH success and failure — otherwise a failed alternative in a choice would
-  // leave _ctx pointing at its discarded array and the next alternative would
-  // capture into the wrong place.
   const sc = v(ctx, '_sc'), sl = v(ctx, '_sl'), sr = v(ctx, '_sr'), st = v(ctx, '_st'), stl = v(ctx, '_stl')
   const stmts: string[] = [
     `${i}const ${chV} = [], ${rawV} = [], ${tlV} = []`,
@@ -979,8 +971,6 @@ function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: strin
   const ndV = v(ctx, '_nd')
   stmts.push(
     `${i}const ${ndV} = _build[${fnIdx}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV})`,
-    // Record into the caller's collectors (the node in children; the node, or a
-    // spanned leaf if build collapsed to a non-node value, in rawChildren).
     `${i}if (${sc}) ${sc}.push(${ndV})`,
     `${i}if (${sr}) ${sr}.push((typeof ${ndV} === 'object' && ${ndV} !== null && ${ndV}._tag === 'node') ? ${ndV} : { _tag: 'leaf', value: typeof ${ndV} === 'string' ? ${ndV} : '', span: { start: ${pos}, end: ${endVar} } })`,
   )
@@ -1375,7 +1365,6 @@ function buildInlineExpression(
   const needsWrapper = ctx.regexDecls.length > 0 || !!collatorDecl || ctx.namedFnDecls.length > 0 || !!mfDecl || !!buildDecl
   if (!needsWrapper) return innerFn
 
-  // Wrap in IIFE to hoist regex/collator/mf/build declarations and named recursive functions.
   const namedPrelude = ctx.namedFnDecls.length > 0 ? namedFnPrelude() : []
   return [
     `/* @__PURE__ */ (() => {`,

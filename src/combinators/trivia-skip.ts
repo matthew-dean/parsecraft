@@ -1,4 +1,12 @@
 import type { ParseContext } from '../types.ts'
+import {
+  cstDeferredTriviaActive,
+  cstRawLen,
+  cstTlLen,
+  pushCstTriviaTriplet,
+  rollbackCstCapture,
+  saveCstMark,
+} from '../cst/capture-buffer.ts'
 
 /**
  * Result of scanning trivia: the position after it, plus a `commit()` that
@@ -10,28 +18,22 @@ import type { ParseContext } from '../types.ts'
 export type TriviaScan = { end: number; commit: () => void }
 
 /** Saved lengths for rolling back speculative trivia commits. */
-export type TriviaRollbackMark = { raw: number; tlog: number; log: number }
+export type TriviaRollbackMark = { raw: number; tlog: number; leaves: number; log: number }
 
 const NOOP_COMMIT = () => {}
 
 /** True when trivia recording must be deferred until the following term commits. */
 export function needsDeferredTriviaCommit(ctx: ParseContext): boolean {
-  return ctx._triviaLog !== undefined || ctx._cstTriviaLog !== undefined
+  return cstDeferredTriviaActive(ctx)
 }
 
 export function saveTriviaMark(ctx: ParseContext): TriviaRollbackMark {
-  const raw = ctx._cstRawChildren as unknown[] | undefined
-  return {
-    raw: raw ? raw.length : 0,
-    tlog: ctx._cstTriviaLog ? ctx._cstTriviaLog.length : 0,
-    log: ctx._triviaLog ? ctx._triviaLog.length : 0,
-  }
+  const m = saveCstMark(ctx)
+  return { raw: m.raw, tlog: m.tlog, leaves: m.leaves, log: ctx._triviaLog ? ctx._triviaLog.length : 0 }
 }
 
 export function rollbackTrivia(ctx: ParseContext, mark: TriviaRollbackMark): void {
-  const raw = ctx._cstRawChildren as unknown[] | undefined
-  if (raw) raw.length = mark.raw
-  if (ctx._cstTriviaLog) ctx._cstTriviaLog.length = mark.tlog
+  rollbackCstCapture(ctx, { raw: mark.raw, tlog: mark.tlog, leaves: mark.leaves })
   if (ctx._triviaLog) ctx._triviaLog.length = mark.log
 }
 
@@ -65,11 +67,10 @@ export function scanTrivia(input: string, cur: number, ctx: ParseContext): Trivi
   if (!triviaP) return { end: cur, commit: NOOP_COMMIT }
 
   const log = ctx._triviaLog
-  const tlog = ctx.captureTrivia && ctx._cstTriviaLog !== undefined ? ctx._cstTriviaLog : undefined
-  const raw = ctx._cstRawChildren as unknown[] | undefined
+  const captureTl = ctx.captureTrivia && (ctx._cstBuf !== undefined || ctx._cstTriviaLog !== undefined)
 
   // ── Log and/or capture mode: defer recording until commit() ─────────────
-  if (log !== undefined || tlog !== undefined) {
+  if (log !== undefined || captureTl) {
     const tr = triviaP.parse(input, cur, {
       trackLines: log !== undefined ? false : ctx.trackLines,
       state: ctx.state,
@@ -80,7 +81,7 @@ export function scanTrivia(input: string, cur: number, ctx: ParseContext): Trivi
       end,
       commit: () => {
         if (log !== undefined) log.push(cur, end)
-        if (tlog !== undefined) tlog.push(cur, end, raw ? raw.length : 0)
+        if (captureTl) pushCstTriviaTriplet(ctx, cur, end)
       },
     }
   }

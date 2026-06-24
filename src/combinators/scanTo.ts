@@ -3,6 +3,7 @@ import { literal } from './literal.ts'
 import { sequence } from './sequence.ts'
 import { transform } from './map.ts'
 import { any } from './first-set.ts'
+import { pushCstLeaf, cstCaptureActive } from '../cst/capture-buffer.ts'
 
 export type ScanToOptions = {
   /** Parsers that match "container" regions to skip over intact (balanced parens, strings, comments…) */
@@ -51,10 +52,9 @@ export function scanTo(
       // see it in children/rawChildren (it would otherwise be lost — only the
       // returned value carries it). Skipped when no collector is active.
       const emit = (end: number) => {
-        if (end > pos && (ctx._cstLeaves || ctx._cstRawChildren)) {
+        if (end > pos && cstCaptureActive(ctx)) {
           const leaf = { _tag: 'leaf', value: input.slice(pos, end), span: { start: pos, end } }
-          if (ctx._cstLeaves) (ctx._cstLeaves as unknown[]).push(leaf)
-          if (ctx._cstRawChildren) (ctx._cstRawChildren as unknown[]).push(leaf)
+          pushCstLeaf(ctx, leaf)
         }
       }
 

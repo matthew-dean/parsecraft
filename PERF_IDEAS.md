@@ -27,11 +27,11 @@ Collapsing rules (e.g. selector hierarchy) still allocate `children[]`, `rawChil
 
 **Ideas:**
 
-- Lazy array allocation (allocate on first push).
-- Single-child fast path when exactly one capture occurred.
+- ~~Lazy array allocation (allocate on first push).~~ ✅ **Interpreter only** — `capture-buffer.ts` lazy buf + single-child scalar; compiled still eager arrays (helper prelude regressed CSS ~50%; needs inlined codegen).
+- Single-child fast path when exactly one capture occurred. ✅ (interpreter, via `single`/`rawSingle`)
 - Compile-time transparent-wrapper elimination when `buildSrc` is `(c) => c[0]` (or equivalent).
 
-Save/restore is done; lazy alloc + single-child are the remaining levers.
+Save/restore is done; compiled lazy alloc needs inline emission before it can land.
 
 ---
 

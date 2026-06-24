@@ -1,6 +1,7 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
 import { fromChar, empty } from './first-set.ts'
 import { failAt } from './probe.ts'
+import { pushCstLeaf, cstCaptureActive } from '../cst/capture-buffer.ts'
 
 let _collatorCache: Intl.Collator | null = null
 function collator(): Intl.Collator {
@@ -55,8 +56,7 @@ export function literal(value: string, opts: LiteralOptions = {}): Combinator<st
       if (matched) {
         const span = { start: pos, end }
         const leaf = { _tag: 'leaf', value: slice, span }
-        if (ctx._cstLeaves) (ctx._cstLeaves as typeof leaf[]).push(leaf)
-        if (ctx._cstRawChildren) (ctx._cstRawChildren as typeof leaf[]).push(leaf)
+        if (cstCaptureActive(ctx)) pushCstLeaf(ctx, leaf)
         return { ok: true, value: slice, span }
       }
       return failAt(ctx, [JSON.stringify(value)], pos)

@@ -58,6 +58,8 @@ export type Combinator<T> = {
   parse(input: string, pos: number, ctx: ParseContext): ParseResult<T>
 }
 
+import type { CstCaptureBuf } from './cst/capture-buffer.ts'
+
 export type ParseContext = {
   trivia?: Combinator<unknown>
   /**
@@ -113,6 +115,8 @@ export type ParseContext = {
    * Zero object allocations — replaces the CSTTrivia object path entirely.
    */
   _cstTriviaLog?: number[]
+  /** Framework-internal: lazy capture buffer for active node() parse. */
+  _cstBuf?: CstCaptureBuf
 }
 
 /**

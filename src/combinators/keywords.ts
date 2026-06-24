@@ -1,6 +1,7 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta, FirstSet } from '../types.ts'
 import { fromChar, union, empty } from './first-set.ts'
 import { failAt } from './probe.ts'
+import { pushCstLeaf, cstCaptureActive } from '../cst/capture-buffer.ts'
 
 export type KeywordsOptions = {
   /** Match case-insensitively. */
@@ -93,8 +94,7 @@ export function keywords(words: readonly string[], opts: KeywordsOptions = {}): 
       const value = m[0]!
       const span = { start: pos, end: pos + value.length }
       const leaf = { _tag: 'leaf', value, span }
-      if (ctx._cstLeaves) (ctx._cstLeaves as typeof leaf[]).push(leaf)
-      if (ctx._cstRawChildren) (ctx._cstRawChildren as typeof leaf[]).push(leaf)
+      if (cstCaptureActive(ctx)) pushCstLeaf(ctx, leaf)
       return { ok: true, value, span }
     },
   }
