@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
-  literal, regex, sequence, optional, sepBy, transform, rules, parse, parser, trivia,
+  literal, regex, sequence, optional, sepBy, transform, rules, parse, parser, trivia, node, oneOrMore, choice,
   makeFunctionalDoc,
 } from '../../src/index.ts'
 import { transformMacro } from '../../src/plugin/index.ts'
@@ -204,6 +204,109 @@ describe('functional grammar — trivia via parser() under the macro', () => {
     if (m.ok) {
       expect(m.value.a).toBe('foo')
       expect(m.value.b).toBe('bar')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// node() — library-owned CST capture. Terminals and trivia are captured into
+// children/rawChildren by parseman itself (no hand-wrapping/reconstruction),
+// identically in the interpreter and the macro-compiled build.
+// ---------------------------------------------------------------------------
+
+describe('functional grammar — node() CST capture', () => {
+  // Grammar: Pair = ident ':' Num ; with whitespace+comment trivia.
+  const ws = trivia(oneOrMore(choice(regex(/[ \t\n]+/), regex(/\/\*(?:[^*]|\*(?!\/))*\*\//))))
+  const summarize = (children: readonly any[], raw: readonly any[]) => ({
+    ch: children.map(c => c._tag === 'node' ? `<${c.type}>` : c.value),
+    raw: raw.map(c => c._tag === 'trivia' ? `triv(${c.value})` : c._tag === 'node' ? `<${c.type}>` : c.value),
+  })
+
+  const { Pair: interpPair } = rules<{ Pair: Combinator<any> }>(g => {
+    const Num = node('Num', regex(/[0-9]+/), (c, r, s) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r) }))
+    const Pair = node('Pair', parser({ trivia: ws }, sequence(regex(/[a-z]+/), literal(':'), g.Num)),
+      (c, r, s) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r) }))
+    return { Pair, Num }
+  })
+
+  const MACRO = `
+import { node, regex, literal, sequence, parser, trivia, oneOrMore, choice, rules } from 'parseman' with { type: 'macro' }
+const ws = trivia(oneOrMore(choice(regex(/[ \\t\\n]+/), regex(/\\/\\*(?:[^*]|\\*(?!\\/))*\\*\\//))))
+const { Pair } = rules(g => {
+  const Num = node('Num', regex(/[0-9]+/), (c, r, s) => ({ _tag: 'node', type: 'Num', span: s, ...summarize(c, r) }))
+  const Pair = node('Pair', parser({ trivia: ws }, sequence(regex(/[a-z]+/), literal(':'), g.Num)),
+    (c, r, s) => ({ _tag: 'node', type: 'Pair', span: s, ...summarize(c, r) }))
+  return { Pair, Num }
+})
+`.trim()
+
+  let macroPair: RuleFn
+  beforeAll(() => {
+    const result = transformMacro(MACRO, 'node-test.ts', new Set(['parseman']))
+    if (!result) throw new Error('macro returned null')
+    if (result.code.includes("from 'parseman'")) throw new Error('node() grammar not compiled:\n' + result.code)
+    const fnBody = result.code.replace(/\bconst\b/g, 'var') + '\nreturn Pair'
+    macroPair = new Function('summarize', fnBody)(summarize) as RuleFn
+  })
+
+  for (const input of ['a:1', 'a : 1', 'ab /*x*/ : /*y*/ 12', 'a:\t5']) {
+    it(`captures children + trivia identically for ${JSON.stringify(input)}`, () => {
+      const i = parse(interpPair, input)
+      const m = macroPair(input, 0, { trackLines: false })
+      expect(i.ok).toBe(true)
+      expect(m.ok).toBe(true)
+      if (i.ok && m.ok) expect(m.value).toEqual(i.value)
+    })
+  }
+
+  it('sub-node appears in children; trivia only in rawChildren', () => {
+    const r = parse(interpPair, 'a /*c*/ : 1')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // children: the ident leaf, ':' leaf, and the <Num> sub-node — no trivia
+    expect(r.value.ch).toEqual(['a', ':', '<Num>'])
+    // rawChildren interleaves the trivia tokens
+    expect(r.value.raw).toEqual(['a', 'triv( )', 'triv(/*c*/)', 'triv( )', ':', 'triv( )', '<Num>'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// not() / scanTo() / balanced() compile under the macro (CSS needs all three).
+// ---------------------------------------------------------------------------
+
+describe('functional grammar — not/scanTo/balanced under the macro', () => {
+  it('compiles a grammar using not(), scanTo() and balanced()', () => {
+    const CODE = `
+import { regex, literal, sequence, not, scanTo, balanced, transform, rules } from 'parseman' with { type: 'macro' }
+const digits = regex(/[0-9]+/)
+const { Num, Body } = rules(g => {
+  // a Num is digits NOT followed by a letter (so '12' but not '12px')
+  const Num = transform(sequence(digits, not(regex(/[a-z]/))), ([n]) => n)
+  // a Body scans to ')' skipping balanced parens
+  const Body = transform(scanTo(literal(')'), { skip: [balanced('(', ')')] }), s => s)
+  return { Num, Body }
+})
+`.trim()
+    const result = transformMacro(CODE, 'not-scan-test.ts', new Set(['parseman']))
+    expect(result).not.toBeNull()
+    // fully compiled → import removed, no runtime fallback combinators left
+    expect(result!.code).not.toContain("from 'parseman'")
+    expect(result!.code).not.toContain('scanTo(')
+    expect(result!.code).not.toContain('not(')
+
+    const fnBody = result!.code.replace(/\bconst\b/g, 'var') + '\nreturn { Num, Body }'
+    const reg = new Function(fnBody)() as Record<string, RuleFn>
+
+    // not(): '12' parses, '12px' fails (digit followed by letter)
+    expect(reg.Num('12', 0, { trackLines: false }).ok).toBe(true)
+    expect(reg.Num('12px', 0, { trackLines: false }).ok).toBe(false)
+    // scanTo()+balanced(): stops just before the matching outer ')', having
+    // skipped the inner '(b)' pair so its ')' isn't mistaken for the sentinel.
+    const b = reg.Body('a(b)c)', 0, { trackLines: false })
+    expect(b.ok).toBe(true)
+    if (b.ok) {
+      expect(b.span.end).toBe(5)   // 'a(b)c' consumed; sentinel ')' not included
+      expect(b.value).toBe('a(b)c')
     }
   })
 })

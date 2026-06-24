@@ -38,4 +38,15 @@ describe('buildTriviaIndex', () => {
     expect(index.before.size).toBe(0)
     expect(index.after.size).toBe(0)
   })
+
+  it('captures document-boundary (leading + trailing/pre-EOF) trivia via opts', () => {
+    // A synthetic root spanning [3, 6] of the input, with leading and trailing
+    // trivia a repeating root would have rolled back.
+    const root = { _tag: 'node', type: 'Root', span: { start: 3, end: 6 }, state: null, children: [] }
+    const input = '   foo /*x*/'   // 0..2 leading ws, 3..5 "foo", 6.. trailing
+    const trivia = /[ \t\n\r\f]+|\/\*(?:[^*]|\*(?!\/))*\*\//
+    const index = buildTriviaIndex(root, { input, trivia })
+    expect(index.before.get(3)?.map(t => t.value)).toEqual(['   '])
+    expect(index.after.get(6)?.map(t => t.value)).toEqual([' ', '/*x*/'])
+  })
 })

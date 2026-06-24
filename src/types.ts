@@ -42,6 +42,8 @@ export type ParserDef =
   | { tag: 'trivia';    parser: Combinator<unknown> }
   | { tag: 'grammar';   parser: Combinator<unknown>; triviaParser: Combinator<unknown> | undefined; trackLines: boolean }
   | { tag: 'lazy';     thunk: () => Combinator<unknown> }
+  | { tag: 'not';      parser: Combinator<unknown> }
+  | { tag: 'node';     type: string; parser: Combinator<unknown>; build: (children: ReadonlyArray<unknown>, rawChildren: ReadonlyArray<unknown>, span: { start: number; end: number }) => unknown; buildSrc?: string }
   | { tag: 'guard';    predicate: (state: unknown) => boolean }
   | { tag: 'withCtx';  extra: unknown; parser: Combinator<unknown> }
   | { tag: 'recover';  parser: Combinator<unknown>; sentinel: Combinator<unknown> }

@@ -41,16 +41,28 @@ const PARSEMAN_MODULE = 'parseman'
 
 export default createUnplugin((opts: ParsecraftPluginOptions = {}) => ({
   name: 'parseman',
+  // Run BEFORE the bundler's TS/JS transform — otherwise esbuild (Vite) strips
+  // the `with { type: 'macro' }` import attribute before we ever see it, and the
+  // macro silently never fires.
+  enforce: 'pre' as const,
 
   transformInclude(id: string) {
     return /\.[jt]sx?$/.test(id) && !id.includes('node_modules')
   },
 
-  transform(code: string, id: string) {
+  transform(this: { warn?: (msg: string) => void }, code: string, id: string) {
     if (!code.includes('parseman')) return null
     if (!code.includes('macro')) return null
     const moduleAliases = new Set([PARSEMAN_MODULE, ...(opts.moduleAliases ?? [])])
-    return transformMacro(code, id, moduleAliases)
+    const result = transformMacro(code, id, moduleAliases)
+    if (result?.warnings.length) {
+      for (const w of result.warnings) {
+        if (typeof this?.warn === 'function') this.warn(`[parseman] ${w}`)
+        else console.warn(`[parseman] ${w}`)
+      }
+    }
+    if (!result) return null
+    return { code: result.code, map: result.map }
   },
 }))
 
@@ -65,11 +77,18 @@ type ImportInfo = {
   fullyResolved: boolean   // mutated after evaluation
 }
 
+export type TransformMacroResult = {
+  code: string
+  map: ReturnType<MagicString['generateMap']>
+  /** Diagnostics for macro-referencing shapes that fell back to the interpreter. */
+  warnings: string[]
+}
+
 export function transformMacro(
   code: string,
   id: string,
   moduleAliases = new Set([PARSEMAN_MODULE]),
-): { code: string; map: ReturnType<MagicString['generateMap']> } | null {
+): TransformMacroResult | null {
   let result: ReturnType<typeof parseSync>
   try {
     result = parseSync(id, code)
@@ -111,7 +130,46 @@ export function transformMacro(
   // replay mfSrcs when outer-scope combinators are referenced inside factories.
   const scope: Scope = new Map<string, ScopeEntry>()
   const replacements: Array<{ start: number; end: number; replacement: string }> = []
+  const warnings: string[] = []
   let anyUnresolved = false
+
+  // Surface a shape the macro couldn't compile (it silently runs via the
+  // interpreter otherwise). Includes a file:line anchor so it's actionable.
+  const lineOf = (pos: number): number => {
+    let line = 1
+    for (let i = 0; i < pos && i < code.length; i++) if (code.charCodeAt(i) === 10) line++
+    return line
+  }
+  const warn = (pos: number, msg: string): void => {
+    anyUnresolved = true
+    warnings.push(`${id}:${lineOf(pos)} — ${msg} (running via the interpreter; add the plugin or simplify the declaration to compile it)`)
+  }
+
+  /** Compile a `rules(factory)` call into `[key, inlineExpression]` rule entries. */
+  const compileRulesFactory = (
+    init: Expression,
+    label: string,
+  ): { entries: Array<[string, string]>; ruleMap: Map<string, Combinator<unknown>> } | null => {
+    const args = (init as unknown as { arguments: unknown[] }).arguments
+    const factoryArg = args[0] as Expression | undefined
+    if (!factoryArg) { warn(init.start, `${label}: rules() needs a factory argument`); return null }
+
+    const ruleMap = evaluateParserFactory(factoryArg, scope, code, [])
+    if (!ruleMap) { warn(init.start, `${label}: rules(...) factory isn't statically evaluable`); return null }
+
+    const entries: Array<[string, string]> = []
+    for (const [ruleKey, rule] of ruleMap) {
+      const compiled = compile(rule)
+      if (compiled.inlineExpression === null) { warn(init.start, `${label}: rule "${ruleKey}" couldn't be inlined`); return null }
+      entries.push([ruleKey, compiled.inlineExpression])
+    }
+    return { entries, ruleMap }
+  }
+
+  const isRulesCall = (init: Expression): boolean =>
+    init.type === 'CallExpression' &&
+    (init as unknown as { callee: { type: string; name?: string } }).callee.type === 'Identifier' &&
+    (init as unknown as { callee: { name?: string } }).callee.name === 'rules'
 
   for (const stmt of body as Statement[]) {
     // Handle both direct VariableDeclarations and exported ones
@@ -143,14 +201,33 @@ export function transformMacro(
         const varName = (d.id as unknown as { name: string }).name
         if (!referencesAny(init, allNames, scope)) continue
 
+        // const name = rules(factory) → an object literal of compiled rules,
+        // so `name.RuleX(...)` resolves to the compiled function at runtime.
+        if (isRulesCall(init)) {
+          const compiledRules = compileRulesFactory(init, varName)
+          if (!compiledRules) continue
+          replacements.push({
+            start: init.start,
+            end: init.end,
+            replacement: `{ ${compiledRules.entries.map(([k, expr]) => `${k}: ${expr}`).join(', ')} }`,
+          })
+          continue
+        }
+
         const mapFnSources: string[] = []
         const parser = evaluateExpr(init, scope, code, mapFnSources)
-        if (parser === null) { anyUnresolved = true; continue }
+        if (parser === null) {
+          warn(init.start, `"${varName}" references a parseman macro import but isn't a statically-evaluable combinator`)
+          continue
+        }
 
         // Sources are carried on each transform's def (set by the evaluator), so
         // codegen derives them in traversal order — no positional array needed.
         const compiled = compile(parser)
-        if (compiled.inlineExpression === null) { anyUnresolved = true; continue }
+        if (compiled.inlineExpression === null) {
+          warn(init.start, `"${varName}" couldn't be inlined (likely closes over a runtime value)`)
+          continue
+        }
 
         replacements.push({
           start: init.start,
@@ -164,27 +241,27 @@ export function transformMacro(
       } else if ((d.id as unknown as { type: string }).type === 'ObjectPattern') {
         // ── Destructured binding: const { a, b } = rules(g => { ... }) ──
         // Only handle rules() factory calls
-        if (init.type !== 'CallExpression') continue
-        const calleeType = (init as unknown as { callee: { type: string; name?: string } }).callee
-        if (calleeType.type !== 'Identifier' || calleeType.name !== 'rules') continue
         if (!referencesAny(init, allNames, scope)) continue
+        if (!isRulesCall(init)) {
+          warn(init.start, `destructured macro binding must come from rules(...)`)
+          continue
+        }
 
-        const args = (init as unknown as { arguments: unknown[] }).arguments
-        const factoryArg = args[0] as Expression | undefined
-        if (!factoryArg) { anyUnresolved = true; continue }
+        const compiledRules = compileRulesFactory(init, '{ … }')
+        if (!compiledRules) continue
+        const byKey = new Map(compiledRules.entries)
 
-        const mapFnSources: string[] = []
-        const ruleMap = evaluateParserFactory(factoryArg, scope, code, mapFnSources)
-        if (!ruleMap) { anyUnresolved = true; continue }
-
-        // Walk the ObjectPattern properties and compile each rule
+        // Walk the ObjectPattern properties and emit each rule under its local name.
         const pattern = d.id as unknown as { properties: unknown[] }
         const lines: string[] = []
         let allOk = true
 
         for (const prop of pattern.properties) {
           const p = prop as { type: string; key: { type: string; name?: string; value?: unknown }; value: { type: string; name?: string } }
-          if (p.type === 'RestElement' || p.type === 'BindingRestElement') { allOk = false; break }
+          if (p.type === 'RestElement' || p.type === 'BindingRestElement') {
+            warn(init.start, `rest element in a rules() destructure isn't supported`)
+            allOk = false; break
+          }
 
           const ruleKey = p.key.type === 'Identifier' ? p.key.name!
             : p.key.type === 'StringLiteral' ? String(p.key.value)
@@ -193,20 +270,19 @@ export function transformMacro(
             : ruleKey
           if (!ruleKey || !localName) { allOk = false; break }
 
-          const rule = ruleMap.get(ruleKey)
-          if (!rule) { allOk = false; break }
+          const inlineExpr = byKey.get(ruleKey)
+          if (inlineExpr === undefined) {
+            warn(init.start, `destructured rule "${ruleKey}" isn't returned by the rules() factory`)
+            allOk = false; break
+          }
 
-          // Each rule derives its own transform sources from def.fnSrc in
-          // codegen order, so a single rule referencing others compiles cleanly.
-          const compiled = compile(rule)
-          if (compiled.inlineExpression === null) { allOk = false; break }
-
-          lines.push(`${exportPrefix}${kind} ${localName} = ${compiled.inlineExpression}`)
-          // Store in scope so subsequent declarations can reference compiled rules
-          scope.set(localName, { combi: rule, mfSrcs: mapFnSources })
+          lines.push(`${exportPrefix}${kind} ${localName} = ${inlineExpr}`)
+          // Store under the local name so a later macro declaration can reference it.
+          const rule = compiledRules.ruleMap.get(ruleKey)
+          if (rule) scope.set(localName, { combi: rule, mfSrcs: [] })
         }
 
-        if (!allOk) { anyUnresolved = true; continue }
+        if (!allOk) continue
 
         replacements.push({
           start: stmtStart,
@@ -217,10 +293,12 @@ export function transformMacro(
     }
   }
 
-  if (replacements.length === 0) return null
+  // Nothing to rewrite and nothing to report — leave the file untouched.
+  if (replacements.length === 0 && warnings.length === 0) return null
 
   // If every declaration referencing an imported name was successfully inlined,
-  // the import is no longer needed. Otherwise downgrade to runtime.
+  // the import is no longer needed. Otherwise downgrade to runtime (strip just
+  // the macro attribute so the import stays valid for the interpreter).
   for (const imp of macroImports) {
     imp.fullyResolved = !anyUnresolved
   }
@@ -247,5 +325,6 @@ export function transformMacro(
   return {
     code: ms.toString(),
     map: ms.generateMap({ hires: true }),
+    warnings,
   }
 }

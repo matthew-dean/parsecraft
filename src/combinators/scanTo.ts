@@ -105,8 +105,14 @@ export function balanced(
   options: ScanToOptions = {},
 ): Combinator<string> {
   const inner = scanTo(literal(close), options)
-  return transform(
+  const combi = transform(
     sequence(literal(open), inner, literal(close)),
     ([o, content, c]) => o + content + c,
   )
+  // Provide the callback source so the macro can inline this library-internal
+  // transform (codegen derives map-fn sources from def.fnSrc).
+  if (combi._def.tag === 'transform') {
+    combi._def.fnSrc = '([o, content, c]) => o + content + c'
+  }
+  return combi
 }

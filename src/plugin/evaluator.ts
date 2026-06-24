@@ -110,6 +110,24 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
     } catch { return null }
   }
 
+  // node(type, parser, build) — CST node rule. Capture the build callback source
+  // (like transform) so codegen inlines it; the inner parser carries the capture.
+  if (callee.name === 'node' && code !== undefined) {
+    const [typeArg, parserArg, buildArg] = node.arguments
+    if (!typeArg || !parserArg || !buildArg
+      || typeArg.type === 'SpreadElement' || parserArg.type === 'SpreadElement' || buildArg.type === 'SpreadElement') return null
+    const typeVal = anyValue(typeArg as Expression, scope, code)
+    if (typeof typeVal !== 'string') return null
+    const inner = anyValue(parserArg as Expression, scope, code, mfs)
+    if (!isCombinator(inner)) return null
+    const buildSrc = code.slice((buildArg as Expression).start, (buildArg as Expression).end)
+    try {
+      const combi = parseman.node(typeVal, inner, () => null)
+      if (combi._def.tag === 'node') combi._def.buildSrc = buildSrc
+      return combi
+    } catch { return null }
+  }
+
   // rules(factory) — handled separately by evaluateParserFactory; signal null here
   if (callee.name === 'rules') return null
 
@@ -156,6 +174,38 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
     try { return parseman.oneOrMore(itemCombi) } catch { return null }
   }
 
+  // not(parser) — negative lookahead (consumes nothing).
+  if (callee.name === 'not') {
+    const [innerArg] = node.arguments
+    if (!innerArg || innerArg.type === 'SpreadElement') return null
+    const inner = anyValue(innerArg as Expression, scope, code, mfs)
+    if (!isCombinator(inner)) return null
+    try { return parseman.not(inner) } catch { return null }
+  }
+
+  // balanced(open, close) — a scanTo def used as a scanTo skipper.
+  if (callee.name === 'balanced') {
+    const [openArg, closeArg] = node.arguments
+    if (!openArg || !closeArg || openArg.type === 'SpreadElement' || closeArg.type === 'SpreadElement') return null
+    const open = anyValue(openArg as Expression, scope, code, [])
+    const close = anyValue(closeArg as Expression, scope, code, [])
+    if (typeof open !== 'string' || typeof close !== 'string') return null
+    try { return parseman.balanced(open, close) } catch { return null }
+  }
+
+  // scanTo(sentinel, opts?) — consume up to (and including) a sentinel, optionally
+  // skipping balanced pairs. opts.skip is an array of combinators.
+  if (callee.name === 'scanTo') {
+    const [sentinelArg, optsArg] = node.arguments
+    if (!sentinelArg || sentinelArg.type === 'SpreadElement') return null
+    const sentinel = anyValue(sentinelArg as Expression, scope, code, [])
+    if (!isCombinator(sentinel)) return null
+    const opts = optsArg && optsArg.type !== 'SpreadElement'
+      ? anyValue(optsArg as Expression, scope, code, [])
+      : undefined
+    try { return parseman.scanTo(sentinel, opts as parseman.ScanToOptions | undefined) } catch { return null }
+  }
+
   const factory = SUPPORTED[callee.name]
   if (!factory) return null
 
@@ -177,6 +227,17 @@ function anyValue(node: Expression, scope: XScope, code?: string, mfs?: string[]
       return new RegExp(node.regex.pattern, node.regex.flags)
     }
     return node.value
+  }
+
+  if (node.type === 'ArrayExpression') {
+    const arr = node as unknown as { elements: Array<Expression | null> }
+    const out: unknown[] = []
+    for (const el of arr.elements) {
+      if (el === null) { out.push(null); continue }
+      if ((el as { type: string }).type === 'SpreadElement') return null
+      out.push(anyValue(el as Expression, scope, code, mfs))
+    }
+    return out
   }
 
   if (node.type === 'ObjectExpression') {

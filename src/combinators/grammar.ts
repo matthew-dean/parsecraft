@@ -35,11 +35,15 @@ export function parser<T>(opts: ParserOptions, root: Combinator<T>): ParsemanPar
       trackLines: opts.trackLines ?? false,
     },
     parse(input: string, pos?: number, _ctx?: ParseContext): ParseResult<T> {
-      const trackLines = opts.trackLines ?? false
+      const trackLines = opts.trackLines ?? _ctx?.trackLines ?? false
+      // Preserve any CST collectors / capture flag from the caller (e.g. an
+      // enclosing node()), layering this grammar's trivia on top. Without this,
+      // a parser() nested inside a node() would drop the node's child collectors.
       const ctx: ParseContext = {
+        ..._ctx,
         trackLines,
         ...(opts.trivia !== undefined ? { trivia: opts.trivia } : {}),
-        ...(opts.captureTrivia ? { captureTrivia: true } : {}),
+        ...(opts.captureTrivia || _ctx?.captureTrivia ? { captureTrivia: true } : {}),
       }
       const result = root.parse(input, pos ?? 0, ctx)
       if (trackLines) {

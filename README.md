@@ -112,7 +112,7 @@ If `with { type: 'macro' }` is stripped (older bundlers, test runners), the attr
 
 ### What gets compiled
 
-Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip` — plus `rules()` factories (including mutually recursive ones) and `parser({ trivia })` wrappers. A full grammar built as a `rules()` factory, with `transform()` callbacks that construct AST nodes, compiles end to end: each rule becomes an independently-callable function and every callback is inlined with its source span. Parsers that close over external variables the evaluator can't resolve stay as-is — the plugin compiles what it can and quietly leaves the rest alone.
+Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip`, `not`, `scanTo`, `balanced` — plus `rules()` factories (including mutually recursive ones), `parser({ trivia })` wrappers, and `node()` rules (CST capture and all). A full grammar built as a `rules()` factory of `node()` rules compiles end to end: each rule becomes an independently-callable function, terminal/trivia capture is emitted inline, and every `build`/`transform` callback is inlined with its source span. Grammars with no `node()` emit zero capture code, so they compile byte-identically. Parsers that close over external variables the evaluator can't resolve stay as-is — the plugin compiles what it can and quietly leaves the rest alone.
 
 ---
 
@@ -131,6 +131,7 @@ Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMor
 | `transform(parser, fn)` | Map the result: `fn(value, span) → newValue`. |
 | `skip(main, skipped)` | Match `main` then `skipped`; return `main`'s value. |
 | `rules(factory)` | Named grammar rules — no forward declarations needed, handles mutual recursion. |
+| `node(type, parser, build)` | CST/AST rule: captures `parser`'s terminals + trivia into `children`/`rawChildren`, then calls `build(children, rawChildren, span)`. |
 | `ref<T>()` | Low-level forward declaration slot (use `rules()` in most cases). |
 | `not(parser)` | Negative lookahead — succeeds (consuming nothing) when `parser` fails. |
 | `guard(predicate)` | Succeeds only when `predicate(ctx)` returns true; used for context-sensitive rules. |
@@ -233,7 +234,9 @@ jsonParser.parse('{ "a": 1 }')
 
 `g.value` is a reference that works anywhere inside the factory regardless of order. Local helpers (`comma`, `pair`, `object`) that don't need to be cross-referenced can be plain `const`. Only put a rule in the returned object if other rules need to reach it as `g.xxx`.
 
-> **Macro and `rules()`:** The plugin fully compiles `rules()` factories, including recursive ones. It emits mutually recursive named functions (`_pf0` etc.) so the cycle is broken. Add `with { type: 'macro' }` to your import and the entire grammar — recursive rules included — is inlined at build time.
+> **Macro and `rules()`:** The plugin fully compiles `rules()` factories, including recursive ones. It emits mutually recursive named functions (`_pf0` etc.) so the cycle is broken. Add `with { type: 'macro' }` to your import and the entire grammar — recursive rules included — is inlined at build time. Both binding forms compile: `const { value } = rules(...)` (each rule becomes a top-level function) and `const grammar = rules(...)` (an object literal of compiled rules, so `grammar.value(...)` works).
+>
+> If the plugin meets a macro-imported declaration it can't compile statically (it closes over a runtime value, or isn't a recognized combinator shape), it leaves that declaration for the interpreter, strips the `with { type: 'macro' }` attribute so the import stays valid, and emits a build **warning** (`[parseman] file:line — …`) pointing at it — so a silent fallback never goes unnoticed.
 
 ### `ref<T>()` — low-level forward declaration
 
@@ -249,73 +252,34 @@ value.define(choice(object, array, str, num, bool, nil))
 
 ## Grammars that build an AST
 
-A full grammar — one that constructs typed AST nodes, supports incremental re-parsing, and handles whitespace-sensitive syntax — is just a `rules()` factory where each node-rule is a `transform()` that builds its node. The `transform` callback receives the parsed parts **and the node's source span**, and returns whatever node object you want. Because that's all ordinary combinator code, the macro compiles the entire grammar — node construction included — to flat, allocation-light JS.
+For grammars that produce a typed CST/AST, support incremental re-parsing, or care about trivia, wrap each rule in `node(type, parser, build)`. parseman captures the rule's terminals — and the trivia between them — into `children` / `rawChildren` arrays and hands them to `build(children, rawChildren, span)`, which returns your node. **Capture is the library's job:** you don't wrap terminals to recover their spans, and you don't reconstruct trivia — it's collected as the parser runs, in both the interpreter and the compiled build.
 
 ```ts
-import { rules, parser, regex, literal, choice, sequence, many, transform, trivia } from 'parseman'
+import { rules, parser, node, regex, literal, sequence, many, trivia } from 'parseman'
 import type { Combinator } from 'parseman'
 
-// Your own node type — anything that satisfies NodeLike (see below) participates
-// in incremental re-parsing. `span` comes free as the transform's 2nd argument.
-type Node = { _tag: 'node'; type: string; span: { start: number; end: number }; state: unknown; children: Node[]; [k: string]: unknown }
-const node = (type: string, span: { start: number; end: number }, children: Node[], fields: Record<string, unknown> = {}): Node =>
-  ({ _tag: 'node', type, span, state: null, children, ...fields })
-
+// Any node shape works as long as it satisfies NodeLike (see below).
+type N = { _tag: 'node'; type: string; span: { start: number; end: number }; state: unknown; children: unknown[] }
 const ws = trivia(regex(/\s+/))
 
-export const { Expr, Num } = rules<{ Expr: Combinator<Node>; Num: Combinator<Node> }>(g => {
-  const num = parser({ trivia: ws }, transform(
-    regex(/[0-9]+/),
-    (text, span) => node('Num', span, [], { value: Number(text) })
-  ))
-  const expr = parser({ trivia: ws }, transform(
-    sequence(g.Num, many(sequence(literal('+'), g.Num))),
-    ([first, rest], span) => node('Expr', span, [first, ...rest.map(([, n]) => n)])
-  ))
+export const { Expr, Num } = rules<{ Expr: Combinator<N>; Num: Combinator<N> }>(g => {
+  const num = node('Num', regex(/[0-9]+/),
+    (children, raw, span) => ({ _tag: 'node', type: 'Num', span, state: null, children: [...children] }))
+  const expr = node('Expr', parser({ trivia: ws }, sequence(g.Num, many(sequence(literal('+'), g.Num)))),
+    (children, raw, span) => ({ _tag: 'node', type: 'Expr', span, state: null, children: [...children] }))
   return { Expr: expr, Num: num }
 })
 
 Expr.parse('1 + 2 + 3', 0, { trackLines: false })
-// value is a Node { _tag: 'node', type: 'Expr', span, children: [Num, Num, Num] }
+// value is a Node whose children are the captured Num sub-nodes and '+' leaves
 ```
 
-Each rule returned from the factory is independently callable — `Expr`, `Num` above are the **rule registry**, which is exactly what incremental re-parsing needs. Wrap each node-rule in `parser({ trivia })` so whitespace-skipping is baked in regardless of which rule you start parsing from (the macro compiles the wrapper away).
+- **`children`** — structural items in source order: spanned `CSTLeaf` terminals (`{ _tag:'leaf', value, span }`) and sub-nodes (whatever a nested `node()`'s `build` returned). A `build` that returns a bare string is recorded by the parent as a spanned leaf, so single-item "collapsing" rules keep their source span.
+- **`rawChildren`** — the same, plus `{ _tag:'trivia', value, span }` tokens for the whitespace/comments consumed between terms. Inspect it for whitespace-sensitive syntax (e.g. CSS `div p` vs `div.p`) or to build a trivia map.
 
-### Spans and field positions
+Each rule returned from the factory is independently callable — `Expr`, `Num` above are the **rule registry** incremental re-parsing needs. Wrap a rule's inner parser in `parser({ trivia })` so trivia-skipping is baked in regardless of which rule you start from; the macro compiles the wrapper (and all capture) away to flat JS.
 
-The second argument to every `transform` callback is the matched span, so each node records its own source range for free. When you need the position of an *individual field* (a language server highlighting one token), wrap that field in a tiny span-capturing transform so the value carries its span:
-
-```ts
-const spanned = <T>(c: Combinator<T>) => transform(c, (value, span) => ({ value, span }))
-
-const decl = transform(
-  sequence(spanned(ident), literal(':'), spanned(value)),
-  ([name, , val], span) => node('Declaration', span, [], { name: name.value, nameSpan: name.span, value: val.value })
-)
-```
-
-### Whitespace-sensitive syntax via span gaps
-
-When whitespace is semantically meaningful (CSS: `div p` is a descendant combinator, `div.p` is one compound selector), you don't need a trivia array — **infer it from the gaps between child spans**. With trivia skipping on, two adjacent matches that were separated by whitespace leave a gap: `prev.span.end < next.span.start`. That gap *is* the descendant combinator:
-
-```ts
-const compound = parser({ trivia: ws }, transform(/* ... */))
-
-const complex = parser({ trivia: ws }, transform(
-  sequence(compound, many(compound)),
-  ([first, rest], span) => {
-    const parts: Node[] = [first]
-    let prev = first
-    for (const next of rest) {
-      // a gap between two compounds means a descendant combinator stood there
-      if (prev.span.end < next.span.start) parts.push(node('Combinator', { start: prev.span.end, end: next.span.start }, [], { kind: ' ' }))
-      parts.push(next)
-      prev = next
-    }
-    return node('Complex', span, parts)
-  }
-))
-```
+> `transform(p, fn)` is still the tool for plain value-mapping (no children/trivia). `node()` is for CST/AST rules — it adds the capture `transform` doesn't. Both compile under the macro.
 
 ### Incremental re-parsing
 

@@ -117,6 +117,69 @@ const upper = transform(literal('hello'), s => s.toUpperCase())
   })
 })
 
+describe('transformMacro — rules() binding forms', () => {
+  it('compiles a destructured rules() binding', () => {
+    const code = `
+import { regex, transform, rules } from 'parseman' with { type: 'macro' }
+const { A, B } = rules(g => {
+  const A = transform(regex(/a/), s => s)
+  const B = transform(regex(/b/), s => s)
+  return { A, B }
+})
+`.trim()
+    const result = transform(code)!
+    expect(result.code).not.toContain("from 'parseman'")
+    expect(result.code).toContain('const A =')
+    expect(result.code).toContain('const B =')
+    expect(result.warnings).toEqual([])
+  })
+
+  it('compiles a simple `const x = rules(...)` binding to an object literal', () => {
+    const code = `
+import { regex, transform, rules } from 'parseman' with { type: 'macro' }
+const grammar = rules(g => {
+  const A = transform(regex(/a/), s => s)
+  const B = transform(regex(/b/), s => s)
+  return { A, B }
+})
+`.trim()
+    const result = transform(code)!
+    // import removed → fully compiled
+    expect(result.code).not.toContain("from 'parseman'")
+    // emitted as an object literal of compiled rule functions
+    expect(result.code).toContain('const grammar = {')
+    expect(result.code).toContain('A:')
+    expect(result.code).toContain('B:')
+    expect(result.code).not.toContain('rules(')
+    expect(result.warnings).toEqual([])
+  })
+})
+
+describe('transformMacro — warnings on uncompilable shapes', () => {
+  it('warns (and keeps a valid import) when a binding closes over a runtime value', () => {
+    const code = `
+import { regex } from 'parseman' with { type: 'macro' }
+const dynamic = regex(externalPattern)
+`.trim()
+    const result = transform(code)!
+    expect(result.warnings.length).toBe(1)
+    expect(result.warnings[0]).toContain('dynamic')
+    expect(result.warnings[0]).toMatch(/test\.ts:2/)
+    // the macro attribute is stripped so the interpreter import stays valid
+    expect(result.code).toContain("from 'parseman'")
+    expect(result.code).not.toContain('type: ')
+  })
+
+  it('does not warn when everything compiles', () => {
+    const code = `
+import { literal } from 'parseman' with { type: 'macro' }
+const x = literal('x')
+`.trim()
+    const result = transform(code)!
+    expect(result.warnings).toEqual([])
+  })
+})
+
 describe('transformMacro — source maps', () => {
   it('returns a source map', () => {
     const code = `

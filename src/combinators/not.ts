@@ -19,9 +19,9 @@ export function not(parser: Combinator<unknown>): Combinator<null> {
   }
 
   return {
-    _tag: 'unknown',
+    _tag: 'not',
     _meta: meta,
-    _def: { tag: 'unknown' },
+    _def: { tag: 'not', parser },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<null> {
       const result = parser.parse(input, pos, ctx)
       if (result.ok) {
