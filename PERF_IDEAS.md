@@ -8,36 +8,44 @@ Library-level opportunities for faster compiled parsers. Grammar authors can onl
 - **`node()` ctx save/restore** — mutate `_ctx` fields instead of spreading a new `ParseContext` per call.
 - **Fast non-capturing trivia** — `_tfN` returns a position number, not `{ ok, value, span }`.
 - **Choice fast paths (non-CST)** — `greedyClassify`, `literalsLongestFirst`, disjoint first-char dispatch, `autoNot` for `firstMatch`.
+- **Choice fast paths in CST grammars** — `emitGreedyClassify` / `emitLiteralsLongestFirst` with `emitLeafCapture` in capturing compiles.
+- **Log-only compiled trivia capture** — merged `_tcN` into `_tfN(…, cap?)`; ~6% bootstrap4 vs duplicate-tree `_tc`.
+- **Interpreter `node()` lazy capture** — `capture-buffer.ts`: defer `children`/`raw`/`tl` array alloc until first push; single-child scalar fast path.
 
 ---
 
 ## High priority
 
-### 1. ~~Choice fast paths disabled in CST grammars~~ ✅
+### ~~1. Choice fast paths disabled in CST grammars~~ ✅
 
-`emitGreedyClassify` / `emitLiteralsLongestFirst` now emit `emitLeafCapture` and run in capturing compiles. `emitGreedyClassify` no longer uses nested `return { ok: true }` (assigns to result vars instead).
-
-Measured: CSS bootstrap4 compiled ~18–22ms (CST + `_triviaLog`, stub nodes) vs interpreted ~35ms. Still faster than jess ~33ms because we skip full Jess AST construction. Prior ~20ms figure omitted trivia capture.
+Moved to **Already landed**.
 
 ---
 
-### 2. `node()` per-invocation overhead
+### ~~2. `node()` per-invocation overhead~~ (partial — interpreter only)
 
-Collapsing rules (e.g. selector hierarchy) still allocate `children[]`, `rawChildren[]`, `triviaLog[]` on every call — interpreter and `emitNode`.
+**Landed (interpreter):**
 
-**Ideas:**
+- Lazy array allocation + single-child scalar (`capture-buffer.ts`).
 
-- ~~Lazy array allocation (allocate on first push).~~ ✅ **Interpreter only** — `capture-buffer.ts` lazy buf + single-child scalar; compiled still eager arrays (helper prelude regressed CSS ~50%; needs inlined codegen).
-- Single-child fast path when exactly one capture occurred. ✅ (interpreter, via `single`/`rawSingle`)
+**Rejected (compiled — do not retry without a new approach):**
+
+| Attempt | Result |
+|---------|--------|
+| Runtime helper prelude (`_cstPushLeaf`, `_cstSaveMark`, …) | CSS compiled **+~50%** (bootstrap4 25.8→39ms) |
+| Inline lazy buf in `cst-capture-codegen.ts` (no helper calls) | CSS compiled **+~32–47%** (bootstrap4 25.8→38ms) |
+
+Eager `[], [], []` in `emitNode` remains faster — branchy inline push costs more than the array alloc it avoids on typical CST shapes.
+
+**Remaining:**
+
 - Compile-time transparent-wrapper elimination when `buildSrc` is `(c) => c[0]` (or equivalent).
 
-Save/restore is done; compiled lazy alloc needs inline emission before it can land.
-
 ---
 
-### 3. ~~Log-only compiled trivia capture~~ ✅
+### ~~3. Log-only compiled trivia capture~~ ✅
 
-Merged `_tcN` into `_tfN(input, pos, ctx, cap?)`: one emitted trivia parser tree per combinator; when `cap` is truthy, push flat offsets into `_ctx._triviaLog` / `_ctx._cstTriviaLog`. Trivia terminals use `capAsTrivia` so `_tf` never pollutes `_cstLeaves`. Eliminates duplicate `_tc` codegen and the extra wrapper call per capture skip (~6% on bootstrap4 vs duplicate-tree `_tc`).
+Moved to **Already landed**.
 
 ---
 
