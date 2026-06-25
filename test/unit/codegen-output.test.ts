@@ -36,8 +36,10 @@ describe('codegen — literal', () => {
     expect(inline(literal('x'))).toMatchInlineSnapshot(`
       "function(input, _pos, _ctx) {
         let pos = _pos
-          if (_pos >= input.length || input.charCodeAt(_pos) !== 120) return { ok: false, expected: [\"\\"x\\"\"], span: { start: _pos, end: _pos } }
-          const _v0 = "x"
+        if (_pos >= input.length || input.charCodeAt(_pos) !== 120) {
+          return { ok: false, expected: ["\\"x\\""], span: { start: _pos, end: _pos } }
+        }
+        const _v0 = "x"
         return { ok: true, value: _v0, span: { start: _pos, end: _pos + 1 } }
       }"
     `)
@@ -69,10 +71,12 @@ describe('codegen — regex', () => {
         const _re0 = /\\d+/y
         return function(input, _pos, _ctx) {
         let pos = _pos
-          _re0.lastIndex = _pos
-          const _m0 = _re0.exec(input)
-          if (_m0 === null) return { ok: false, expected: ["/[0-9]+/"], span: { start: _pos, end: _pos } }
-          const _v1 = _m0[0]
+        _re0.lastIndex = _pos
+        const _m0 = _re0.exec(input)
+        if (_m0 === null) {
+          return { ok: false, expected: ["/[0-9]+/"], span: { start: _pos, end: _pos } }
+        }
+        const _v1 = _m0[0]
         return { ok: true, value: _v1, span: { start: _pos, end: _pos + _v1.length } }
       }
       })()"
@@ -97,24 +101,35 @@ describe('codegen — disjoint choice', () => {
     expect(inline(choice(literal('GET'), literal('POST'), literal('DELETE')))).toMatchInlineSnapshot(`
       "function(input, _pos, _ctx) {
         let pos = _pos
-          const _code0 = _pos < input.length ? (input.codePointAt(_pos) ?? -1) : -1
-          let _chv1, _che2 = _pos
-          if (_code0 === 71) {
-            if (_pos + 3 > input.length || input.charCodeAt(_pos) !== 71 || input.charCodeAt(_pos + 1) !== 69 || input.charCodeAt(_pos + 2) !== 84) return { ok: false, expected: [\"\\"GET\\"\"], span: { start: _pos, end: _pos } }
-            const _v3 = "GET"
-            _chv1 = _v3; _che2 = _pos + 3
+        const _code0 = _pos < input.length ? (input.codePointAt(_pos) ?? -1) : -1
+        let _chv1, _che2 = _pos
+        if (_code0 === 71) {
+          if (_pos + 3 > input.length || input.charCodeAt(_pos) !== 71 || input.charCodeAt(_pos + 1) !== 69 || input.charCodeAt(_pos + 2) !== 84) {
+            return { ok: false, expected: ["\\"GET\\""], span: { start: _pos, end: _pos } }
           }
-          else if (_code0 === 80) {
-            if (_pos + 4 > input.length || input.charCodeAt(_pos) !== 80 || input.charCodeAt(_pos + 1) !== 79 || input.charCodeAt(_pos + 2) !== 83 || input.charCodeAt(_pos + 3) !== 84) return { ok: false, expected: [\"\\"POST\\"\"], span: { start: _pos, end: _pos } }
-            const _v4 = "POST"
-            _chv1 = _v4; _che2 = _pos + 4
+          const _v3 = "GET"
+          _chv1 = _v3
+          _che2 = _pos + 3
+        }
+        else if (_code0 === 80) {
+          if (_pos + 4 > input.length || input.charCodeAt(_pos) !== 80 || input.charCodeAt(_pos + 1) !== 79 || input.charCodeAt(_pos + 2) !== 83 || input.charCodeAt(_pos + 3) !== 84) {
+            return { ok: false, expected: ["\\"POST\\""], span: { start: _pos, end: _pos } }
           }
-          else if (_code0 === 68) {
-            if (!input.startsWith("DELETE", _pos)) return { ok: false, expected: [\"\\"DELETE\\"\"], span: { start: _pos, end: _pos } }
-            const _v5 = "DELETE"
-            _chv1 = _v5; _che2 = _pos + 6
+          const _v4 = "POST"
+          _chv1 = _v4
+          _che2 = _pos + 4
+        }
+        else if (_code0 === 68) {
+          if (!input.startsWith("DELETE", _pos)) {
+            return { ok: false, expected: ["\\"DELETE\\""], span: { start: _pos, end: _pos } }
           }
-          else return { ok: false, expected: [\"\\"GET\\"\",\"\\"POST\\"\",\"\\"DELETE\\"\"], span: { start: _pos, end: _pos } }
+          const _v5 = "DELETE"
+          _chv1 = _v5
+          _che2 = _pos + 6
+        }
+        else {
+          return { ok: false, expected: ["\\"GET\\"","\\"POST\\"","\\"DELETE\\""], span: { start: _pos, end: _pos } }
+        }
         return { ok: true, value: _chv1, span: { start: _pos, end: _che2 } }
       }"
     `)

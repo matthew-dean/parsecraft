@@ -209,7 +209,7 @@ export function transformMacro(
           replacements.push({
             start: init.start,
             end: init.end,
-            replacement: `{ ${compiledRules.entries.map(([k, expr]) => `${k}: ${expr}`).join(', ')} }`,
+            replacement: `{\n${compiledRules.entries.map(([k, expr]) => `  ${k}: ${expr}`).join(',\n')}\n}`,
           })
           continue
         }
