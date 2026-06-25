@@ -15,13 +15,13 @@ import type { Combinator, ParseFail, ParseContext } from '../types.ts'
  * quoted literals like `"\"{\""` and regex patterns like `"/[0-9]+/"`.
  */
 export function completionsAt(
-  parser: Combinator<unknown>,
+  combinator: Combinator<unknown>,
   input: string,
   offset: number,
 ): string[] {
   const probe: { offset: number; best: ParseFail | null } = { offset, best: null }
   const ctx: ParseContext = { trackLines: false, _probe: probe }
-  const result = parser.parse(input.slice(0, offset), 0, ctx)
+  const result = combinator.parse(input.slice(0, offset), 0, ctx)
 
   // If the parser consumed everything up to offset successfully, there is nothing
   // to complete — the input is already valid at this position.

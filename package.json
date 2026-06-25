@@ -53,6 +53,7 @@
     "@types/node": "~26.0.0",
     "@types/parsimmon": "~1.10.9",
     "chevrotain": "~12.0.0",
+    "esbuild": "~0.27.7",
     "jison": "~0.4.18",
     "moo": "~0.5.3",
     "nearley": "~2.20.1",

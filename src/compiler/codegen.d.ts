@@ -30,4 +30,4 @@ export type CompiledParser<T> = {
      */
     inlineExpression: string | null;
 };
-export declare function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): CompiledParser<T>;
+export declare function compile<T>(combinator: Combinator<T>, mapFnSources?: string[]): CompiledParser<T>;

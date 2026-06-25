@@ -14,7 +14,7 @@ export function choice<T extends [Combinator<unknown> | GatedArm<unknown>, ...(C
   ...args: T
 ): Combinator<UnionArms<T>> {
   // Unwrap gated arms into (parser, gate) pairs
-  const parsers = args.map(a => ('gate' in a ? a.parser : a)) as Combinator<unknown>[]
+  const parsers = args.map(a => ('gate' in a ? a.combinator : a)) as Combinator<unknown>[]
   const gates   = args.map(a => ('gate' in a ? a.gate   : null)) as (((state: unknown) => boolean) | null)[]
 
   const hasGates = gates.some(g => g !== null)

@@ -19,7 +19,7 @@ describe('gated choice arms — runtime', () => {
   it('gated arm skipped when gate false', () => {
     // returnKw only accessible when inFn is true
     const p = choice(
-      { gate: (u) => (u as Ctx | undefined)?.inFn === true, parser: literal('return') } satisfies GatedArm,
+      { gate: (u) => (u as Ctx | undefined)?.inFn === true, combinator: literal('return') } satisfies GatedArm,
       literal('ident'),
     )
     // No user context → gate false → returnKw skipped → ident matches
@@ -30,7 +30,7 @@ describe('gated choice arms — runtime', () => {
 
   it('gated arm attempted when gate true', () => {
     const p = choice(
-      { gate: (u) => (u as Ctx | undefined)?.inFn === true, parser: literal('return') } satisfies GatedArm,
+      { gate: (u) => (u as Ctx | undefined)?.inFn === true, combinator: literal('return') } satisfies GatedArm,
       literal('ident'),
     )
     const inner = withCtx<Ctx, unknown>({ inFn: true }, p)
@@ -42,7 +42,7 @@ describe('gated choice arms — runtime', () => {
   it('gate false causes next arm to be tried', () => {
     // gate always false → first arm always skipped → second arm wins
     const p = choice(
-      { gate: () => false, parser: literal('never') } satisfies GatedArm,
+      { gate: () => false, combinator: literal('never') } satisfies GatedArm,
       literal('yes'),
     )
     const r = parse(p, 'yes')
@@ -52,8 +52,8 @@ describe('gated choice arms — runtime', () => {
   it('multiple gated arms: first matching gate wins', () => {
     type S = { mode: 'a' | 'b' | 'c' }
     const p = choice(
-      { gate: (u) => (u as S | undefined)?.mode === 'a', parser: literal('alpha') } satisfies GatedArm<string>,
-      { gate: (u) => (u as S | undefined)?.mode === 'b', parser: literal('beta') }  satisfies GatedArm<string>,
+      { gate: (u) => (u as S | undefined)?.mode === 'a', combinator: literal('alpha') } satisfies GatedArm<string>,
+      { gate: (u) => (u as S | undefined)?.mode === 'b', combinator: literal('beta') }  satisfies GatedArm<string>,
       literal('fallback'),
     )
 
@@ -73,7 +73,7 @@ describe('gated choice arms — runtime', () => {
 
   it('gated choice: fails when all gates block the only matching arm', () => {
     const p = choice(
-      { gate: () => false, parser: literal('x') } satisfies GatedArm,
+      { gate: () => false, combinator: literal('x') } satisfies GatedArm,
     )
     expect(parse(p, 'x').ok).toBe(false)
   })
@@ -81,7 +81,7 @@ describe('gated choice arms — runtime', () => {
   it('practical: return keyword only inside function context', () => {
     type S = { inFn: boolean }
     const stmt = choice(
-      { gate: (u) => (u as S | undefined)?.inFn === true, parser: literal('return') } satisfies GatedArm,
+      { gate: (u) => (u as S | undefined)?.inFn === true, combinator: literal('return') } satisfies GatedArm,
       literal('expr'),
     )
     const fnBody = withCtx<S, unknown>({ inFn: true }, many(sequence(stmt, literal(';'))))
@@ -105,7 +105,7 @@ describe('gated choice arms — runtime', () => {
 describe('gated choice arms — compiled', () => {
   it('gate false skips arm in compiled parser', () => {
     const p = compile(choice(
-      { gate: () => false, parser: literal('never') } satisfies GatedArm,
+      { gate: () => false, combinator: literal('never') } satisfies GatedArm,
       literal('yes'),
     ))
     const r = p.parse('yes')
@@ -116,7 +116,7 @@ describe('gated choice arms — compiled', () => {
   it('gate with withCtx in compiled parser', () => {
     type S = { on: boolean }
     const inner = choice(
-      { gate: (u) => (u as S).on, parser: literal('on') } satisfies GatedArm<string>,
+      { gate: (u) => (u as S).on, combinator: literal('on') } satisfies GatedArm<string>,
       literal('off'),
     )
     const p = compile(withCtx<S, unknown>({ on: true }, inner))

@@ -3,7 +3,7 @@ import type { Combinator, ParseContext, ParseResult, ParserMeta, ParseError } fr
 export type { ParseError }
 
 /**
- * Error-recovery combinator. Tries `parser`; on success returns normally.
+ * Error-recovery combinator. Tries `combinator`; on success returns normally.
  * On failure, scans forward one character at a time until `sentinel` matches
  * (or EOF), then returns a ParseError node spanning the skipped range.
  * The sentinel is NOT consumed — the caller's grammar continues from there.
@@ -18,7 +18,7 @@ export type { ParseError }
  *   )
  */
 export function recover<T>(
-  parser: Combinator<T>,
+  combinator: Combinator<T>,
   sentinel: Combinator<unknown>,
 ): Combinator<T | ParseError> {
   const meta: ParserMeta = {
@@ -29,9 +29,9 @@ export function recover<T>(
   return {
     _tag: 'recover',
     _meta: meta,
-    _def: { tag: 'recover', parser: parser as Combinator<unknown>, sentinel },
+    _def: { tag: 'recover', parser: combinator as Combinator<unknown>, sentinel },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T | ParseError> {
-      const result = parser.parse(input, pos, ctx)
+      const result = combinator.parse(input, pos, ctx)
       if (result.ok) return result as ParseResult<T | ParseError>
 
       let scanPos = pos

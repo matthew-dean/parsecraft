@@ -44,7 +44,7 @@ export type ParserDef =
   | { tag: 'grammar';   parser: Combinator<unknown>; triviaParser: Combinator<unknown> | undefined; trackLines: boolean }
   | { tag: 'lazy';     thunk: () => Combinator<unknown> }
   | { tag: 'not';      parser: Combinator<unknown> }
-  | { tag: 'node';     type: string; parser: Combinator<unknown>; build: (children: ReadonlyArray<unknown>, rawChildren: ReadonlyArray<unknown>, span: { start: number; end: number }) => unknown; buildSrc?: string }
+  | { tag: 'node';     type: string; parser: Combinator<unknown>; build: (children: ReadonlyArray<unknown>, rawChildren: ReadonlyArray<unknown>, span: { start: number; end: number }, triviaLog: readonly number[], state: unknown) => unknown; buildSrc?: string }
   | { tag: 'guard';    predicate: (state: unknown) => boolean }
   | { tag: 'withCtx';  extra: unknown; parser: Combinator<unknown> }
   | { tag: 'recover';  parser: Combinator<unknown>; sentinel: Combinator<unknown> }
@@ -74,7 +74,7 @@ export type ParseContext = {
    * per maximal sub-match of the trivia parser (e.g. a whitespace run or a
    * comment). When false/unset, trivia is skipped silently. Default: skip.
    */
-  captureTrivia?: boolean
+  captureTrivia?: boolean | undefined
   trackLines: boolean
   /** Grammar-author-provided state, scoped with withCtx() and read in guard(). */
   state?: unknown
@@ -88,23 +88,23 @@ export type ParseContext = {
   _probe?: { offset: number; best: ParseFail | null }
   /**
    * Framework-internal: current CSTNode rule's child collector.
-   * Set by GrammarParser capital-letter parser; undefined outside CST parsing.
+   * Set by node() during capture; undefined outside an active node parse.
    * CSTNode parsers append themselves here after a successful parse.
    */
-  _cstChildren?: unknown[]
+  _cstChildren?: unknown[] | undefined
   /**
    * Framework-internal: collector for CSTLeaf terminals.
    * Usually points to the same array as _cstChildren (both live together).
    * literal() and regex() append a CSTLeaf here when set.
    */
-  _cstLeaves?: unknown[]
+  _cstLeaves?: unknown[] | undefined
   /**
    * Framework-internal: collector for ALL children including trivia.
    * Set alongside _cstChildren/_cstLeaves. Receives CSTLeaf + CSTNode entries
    * (same as _cstChildren) PLUS CSTTrivia entries for trivia consumed between terms.
    * Passed to buildNode() as rawChildren so grammars can inspect trivia.
    */
-  _cstRawChildren?: unknown[]
+  _cstRawChildren?: unknown[] | undefined
   /**
    * Framework-internal: flat trivia log. When set, scanTrivia records each
    * consumed trivia entry as two numbers [start, end] appended to this
@@ -120,9 +120,9 @@ export type ParseContext = {
    * the trivia was consumed, so consumers know where in rawChildren to insert it.
    * Zero object allocations — replaces the CSTTrivia object path entirely.
    */
-  _cstTriviaLog?: number[]
+  _cstTriviaLog?: number[] | undefined
   /** Framework-internal: lazy capture buffer for active node() parse. */
-  _cstBuf?: CstCaptureBuf
+  _cstBuf?: CstCaptureBuf | undefined
 }
 
 /**
@@ -185,9 +185,9 @@ export type AutoNotCheck =
  * it is evaluated (cheaply, without parsing) before the arm is attempted.
  * If the gate returns false the arm is skipped entirely.
  *
- * Usage: choice({ gate: s => (s as Ctx).inFn, parser: returnKw }, ident)
+ * Usage: choice({ gate: s => (s as Ctx).inFn, combinator: returnKw }, ident)
  */
 export type GatedArm<T = unknown> = {
   gate: (state: unknown) => boolean
-  parser: Combinator<T>
+  combinator: Combinator<T>
 }

@@ -1,5 +1,6 @@
 /**
  * Functional incremental document — incremental re-parse over a rules() registry.
+ */
 import type { ParseContext, ParseFail, ParseResult } from '../types.ts'
 import type { NodeLike, CSTLeaf, CSTError } from '../cst/types.ts'
 

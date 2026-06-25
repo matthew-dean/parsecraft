@@ -2,7 +2,7 @@ import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types
 import { beginCstNodeCapture, endCstNodeCapture, pushCstChild } from '../cst/capture-buffer.ts'
 
 /**
- * A CST/AST node rule. Runs `parser` while collecting its terminals into
+ * A CST/AST node rule. Runs `combinator` while collecting its terminals into
  * `children` / `rawChildren` arrays and trivia spans into `triviaLog`, then
  * calls `build(children, rawChildren, span, triviaLog)` to produce the node.
  *
@@ -25,19 +25,19 @@ export type BuildNode<N> = (
   state: unknown,
 ) => N
 
-export function node<N>(type: string, parser: Combinator<unknown>, build: BuildNode<N>): Combinator<N> {
+export function node<N>(type: string, combinator: Combinator<unknown>, build: BuildNode<N>): Combinator<N> {
   const meta: ParserMeta = {
-    firstSet: parser._meta.firstSet,
-    canMatchNewline: parser._meta.canMatchNewline,
+    firstSet: combinator._meta.firstSet,
+    canMatchNewline: combinator._meta.canMatchNewline,
     isTrivia: false,
   }
   return {
     _tag: 'node',
     _meta: meta,
-    _def: { tag: 'node', type, parser, build },
+    _def: { tag: 'node', type, parser: combinator, build },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<N> {
       const saved = beginCstNodeCapture(ctx)
-      const r = parser.parse(input, pos, ctx)
+      const r = combinator.parse(input, pos, ctx)
       const { children, rawChildren, triviaLog } = endCstNodeCapture(ctx, saved)
 
       if (!r.ok) return r

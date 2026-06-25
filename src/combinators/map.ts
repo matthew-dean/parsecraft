@@ -2,15 +2,15 @@ import type { Combinator, ParseContext, ParseResult } from '../types.ts'
 import { analyzeLabeledTrivia } from '../cst/trivia-kinds.ts'
 
 export function transform<T, U>(
-  parser: Combinator<T>,
+  combinator: Combinator<T>,
   fn: (value: T, span: { start: number; end: number }) => U
 ): Combinator<U> {
   return {
     _tag: 'transform',
-    _meta: parser._meta,
-    _def: { tag: 'transform', parser: parser as Combinator<unknown>, fn: fn as (v: unknown, span: { start: number; end: number }) => unknown },
+    _meta: combinator._meta,
+    _def: { tag: 'transform', parser: combinator as Combinator<unknown>, fn: fn as (v: unknown, span: { start: number; end: number }) => unknown },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<U> {
-      const result = parser.parse(input, pos, ctx)
+      const result = combinator.parse(input, pos, ctx)
       if (!result.ok) return result
       return { ...result, value: fn(result.value, result.span) }
     },
@@ -32,17 +32,17 @@ export function skip<T, S>(main: Combinator<T>, skipped: Combinator<S>): Combina
   }
 }
 
-export function trivia<T>(parser: Combinator<T>): Combinator<T> {
-  const kindLabels = analyzeLabeledTrivia(parser as Combinator<unknown>)?.labels
+export function trivia<T>(combinator: Combinator<T>): Combinator<T> {
+  const kindLabels = analyzeLabeledTrivia(combinator as Combinator<unknown>)?.labels
   return {
-    _tag: parser._tag,
+    _tag: combinator._tag,
     _meta: {
-      ...parser._meta,
+      ...combinator._meta,
       isTrivia: true,
       ...(kindLabels ? { triviaKindLabels: kindLabels } : {}),
     },
-    _def: { tag: 'trivia', parser: parser as Combinator<unknown> },
-    parse: parser.parse.bind(parser),
+    _def: { tag: 'trivia', parser: combinator as Combinator<unknown> },
+    parse: combinator.parse.bind(combinator),
   }
 }
 
@@ -51,11 +51,11 @@ export function trivia<T>(parser: Combinator<T>): Combinator<T> {
  * Parse behavior is unchanged; the label is metadata for tooling and future
  * trivia-kind capture (`'whitespace'`, `'blockComment'`, …).
  */
-export function label<T>(name: string, parser: Combinator<T>): Combinator<T> {
+export function label<T>(name: string, combinator: Combinator<T>): Combinator<T> {
   return {
-    _tag: parser._tag,
-    _meta: parser._meta,
-    _def: { tag: 'label', label: name, parser: parser as Combinator<unknown> },
-    parse: parser.parse.bind(parser),
+    _tag: combinator._tag,
+    _meta: combinator._meta,
+    _def: { tag: 'label', label: name, parser: combinator as Combinator<unknown> },
+    parse: combinator.parse.bind(combinator),
   }
 }

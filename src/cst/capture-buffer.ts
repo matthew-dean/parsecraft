@@ -2,11 +2,11 @@ import type { ParseContext } from '../types.ts'
 
 /** Lazy per-node capture state — arrays materialized on first push. */
 export type CstCaptureBuf = {
-  single?: unknown
-  ch?: unknown[]
-  rawSingle?: unknown
-  raw?: unknown[]
-  tl?: number[]
+  single?: unknown | undefined
+  ch?: unknown[] | undefined
+  rawSingle?: unknown | undefined
+  raw?: unknown[] | undefined
+  tl?: number[] | undefined
 }
 
 const EMPTY: unknown[] = []
@@ -78,11 +78,11 @@ export function pushCstChild(ctx: ParseContext, built: unknown, rawEntry: unknow
   const b = ctx._cstBuf
   if (b) {
     if (b.ch) b.ch.push(built)
-    else if (b.single !== undefined) { b.ch = [b.single, built]; delete b.single }
+    else if (b.single !== undefined) { b.ch = [b.single, built]; b.single = undefined }
     else b.single = built
 
     if (b.raw) b.raw.push(rawEntry)
-    else if (b.rawSingle !== undefined) { b.raw = [b.rawSingle, rawEntry]; delete b.rawSingle }
+    else if (b.rawSingle !== undefined) { b.raw = [b.rawSingle, rawEntry]; b.rawSingle = undefined }
     else b.rawSingle = rawEntry
     return
   }
@@ -133,12 +133,12 @@ function rollbackBufList(
 ): void {
   const arr = b[keyMulti]
   if (arr) {
-    if (len === 0) delete b[keyMulti]
-    else if (len === 1) { b[keySingle] = arr[0]; delete b[keyMulti] }
+    if (len === 0) b[keyMulti] = undefined
+    else if (len === 1) { b[keySingle] = arr[0]; b[keyMulti] = undefined }
     else arr.length = len
     return
   }
-  if (len === 0) delete b[keySingle]
+  if (len === 0) b[keySingle] = undefined
 }
 
 export function rollbackCstCapture(ctx: ParseContext, mark: CstRollbackMark): void {
@@ -147,7 +147,7 @@ export function rollbackCstCapture(ctx: ParseContext, mark: CstRollbackMark): vo
     rollbackBufList(b, 'raw', 'rawSingle', mark.raw)
     rollbackBufList(b, 'ch', 'single', mark.leaves)
     if (b.tl) {
-      if (mark.tlog === 0) delete b.tl
+      if (mark.tlog === 0) b.tl = undefined
       else b.tl.length = mark.tlog
     }
     return

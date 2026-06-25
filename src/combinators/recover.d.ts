@@ -1,7 +1,7 @@
 import type { Combinator, ParseError } from '../types.ts';
 export type { ParseError };
 /**
- * Error-recovery combinator. Tries `parser`; on success returns normally.
+ * Error-recovery combinator. Tries `combinator`; on success returns normally.
  * On failure, scans forward one character at a time until `sentinel` matches
  * (or EOF), then returns a ParseError node spanning the skipped range.
  * The sentinel is NOT consumed — the caller's grammar continues from there.
@@ -15,5 +15,5 @@ export type { ParseError };
  *     recover(exprStmt, literal(';'))
  *   )
  */
-export declare function recover<T>(parser: Combinator<T>, sentinel: Combinator<unknown>): Combinator<T | ParseError>;
+export declare function recover<T>(combinator: Combinator<T>, sentinel: Combinator<unknown>): Combinator<T | ParseError>;
 export declare function isParseError(value: unknown): value is ParseError;

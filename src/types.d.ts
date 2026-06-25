@@ -205,9 +205,9 @@ export type AutoNotCheck = {
  * it is evaluated (cheaply, without parsing) before the arm is attempted.
  * If the gate returns false the arm is skipped entirely.
  *
- * Usage: choice({ gate: s => (s as Ctx).inFn, parser: returnKw }, ident)
+ * Usage: choice({ gate: s => (s as Ctx).inFn, combinator: returnKw }, ident)
  */
 export type GatedArm<T = unknown> = {
     gate: (state: unknown) => boolean;
-    parser: Combinator<T>;
+    combinator: Combinator<T>;
 };

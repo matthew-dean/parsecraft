@@ -53,9 +53,9 @@ type Ctx = {
   /** Generated function declaration strings, prepended before the main body */
   namedFnDecls: string[]
   /** Active trivia parser (set by grammar() wrappers, cleared on exit) */
-  activeTrivia?: Combinator<unknown>
+  activeTrivia?: Combinator<unknown> | undefined
   /** Label table from grammar trivia for default ParseContext. */
-  triviaKindLabels?: readonly string[]
+  triviaKindLabels?: readonly string[] | undefined
   /**
    * Whether this compile contains any node() rule. When true, terminals emit a
    * `_ctx._cstLeaves` capture and trivia skips capture trivia tokens — flowing
@@ -65,7 +65,7 @@ type Ctx = {
    */
   capturing?: boolean
   /** Inside the trivia-capture fn: terminals emit CSTTrivia tokens, not leaves. */
-  capAsTrivia?: boolean
+  capAsTrivia?: boolean | undefined
   /** Trivia parser → name of its capturing variant fn (separate from namedParsers). */
   triviaCaptureNames: Map<Combinator<unknown>, string>
   /**
@@ -75,14 +75,14 @@ type Ctx = {
    */
   triviaFnNames: Map<Combinator<unknown>, string>
   /** node() build functions captured at compile time (parallel to buildSrcs). */
-  buildFns: Array<(children: ReadonlyArray<unknown>, raw: ReadonlyArray<unknown>, span: { start: number; end: number }, triviaLog: readonly number[]) => unknown>
+  buildFns: Array<(children: ReadonlyArray<unknown>, raw: ReadonlyArray<unknown>, span: { start: number; end: number }, triviaLog: readonly number[], state: unknown) => unknown>
   /** Source text of each build fn (set from def.buildSrc; null when unavailable). */
   buildSrcs: Array<string | null>
   /**
    * When set, `failStmt` emits `break <label>` instead of `return { ok: false }`.
    * Used by emitFallible to let labeled blocks act as the failure boundary.
    */
-  failLabel?: string
+  failLabel?: string | undefined
 }
 
 function v(ctx: Ctx, prefix = '_v'): string { return `${prefix}${ctx.vars++}` }
@@ -214,12 +214,12 @@ function ensureTriviaFn(ctx: Ctx): string {
   ctx.indent    = 2
   ctx.failLabel = '_triv'
   ctx.capAsTrivia = true  // trivia terminals must not push into _cstLeaves
-  delete ctx.activeTrivia  // trivia parser must not skip trivia within itself
+  ctx.activeTrivia = undefined  // trivia parser must not skip trivia within itself
   const r = emit(trivia, ctx, '_pos')
   ctx.indent    = savedIndent
   ctx.failLabel = savedFailLabel
   ctx.capAsTrivia = savedCapAsTrivia
-  if (savedTrivia) ctx.activeTrivia = savedTrivia
+  ctx.activeTrivia = savedTrivia
 
   ctx.namedFnDecls.push([
     `function ${fnName}(input, _pos, _ctx, _cap) {`,
@@ -1227,10 +1227,8 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
         }
       }
       const r = emit(def.parser, ctx, pos)
-      if (savedTrivia === undefined) delete ctx.activeTrivia
-      else ctx.activeTrivia = savedTrivia
-      if (savedKindLabels === undefined) delete ctx.triviaKindLabels
-      else ctx.triviaKindLabels = savedKindLabels
+      ctx.activeTrivia = savedTrivia
+      ctx.triviaKindLabels = savedKindLabels
       return r
     }
     case 'not':     return emitNot(def, ctx, pos)
@@ -1348,7 +1346,7 @@ function hasNodeDef(p: Combinator<unknown>, seen: Set<Combinator<unknown>> = new
   }
 }
 
-export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): CompiledParser<T> {
+export function compile<T>(combinator: Combinator<T>, mapFnSources?: string[]): CompiledParser<T> {
   const ctx: Ctx = {
     vars: 0,
     indent: 1,
@@ -1364,10 +1362,10 @@ export function compile<T>(parser: Combinator<T>, mapFnSources?: string[]): Comp
     triviaCaptureNames: new Map(),
     triviaFnNames: new Map(),
     namedFnDecls: [],
-    capturing: hasNodeDef(parser as Combinator<unknown>),
+    capturing: hasNodeDef(combinator as Combinator<unknown>),
   }
 
-  const r = emit(parser as Combinator<unknown>, ctx, '_pos')
+  const r = emit(combinator as Combinator<unknown>, ctx, '_pos')
 
   const collatorDecl = ctx.needsCollator
     ? `const _collator = new Intl.Collator(undefined, { sensitivity: 'accent' })\n`
