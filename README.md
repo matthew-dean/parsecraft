@@ -410,21 +410,25 @@ vscode.workspace.onDidChangeTextDocument(event => {
 })
 ```
 
-### Inheritance — by composition
+### Extending grammars
 
-Share rules across grammar variants by composition: factor common rules into helpers, and let each variant swap the ones it needs. Because every rule is a plain value, a variant is just different pieces passed into the same `rules()` shape — and it all stays macro-compilable.
+Don't copy a `rules()` factory to make a variant — export what stays the same and pass in (or wrap) what changes. `examples/json/` is the template:
+
+| File | What changes |
+|------|----------------|
+| `parser.ts` | Base grammar + `makeJSONParser(customWs)` |
+| `jsonc.ts` | Trivia only — `makeJSONParser(jsoncWs)` |
+| `jsonl.ts` | Document shape — `sepBy(jsonValue, '\n')` with tighter trivia |
 
 ```ts
-// shared building blocks
-const makeIdent = () => regex(/[a-zA-Z_]\w*/)
+// jsonc.ts — same recursive grammar, different trivia
+export const jsoncValue = makeJSONParser(jsoncWs)
 
-export const { Expr } = rules<{ Expr: Combinator<Node> }>(g => {
-  const ident = makeIdent()                       // base
-  // a JSX variant would use regex(/[a-zA-Z_$][\w$]*/) here instead
-  /* ...rules referencing ident... */
-  return { Expr: /* ... */ }
-})
+// jsonl.ts — reuse jsonValue, wrap at the top
+export const jsonl = parser({ trivia: lineWs }, sepBy(jsonValue, literal('\n')))
 ```
+
+`makeJSONParser` in `parser.ts` is the knob: one `rules()` body, trivia passed in, `parser({ trivia }, value)` returned. Unchanged core → parameterize; unchanged rule, different document → wrap the export.
 
 ---
 

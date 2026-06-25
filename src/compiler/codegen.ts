@@ -1035,10 +1035,12 @@ function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: strin
   stmts.push(`${i}_ctx._cstChildren = ${sc}; _ctx._cstLeaves = ${sl}; _ctx._cstRawChildren = ${sr}; _ctx.captureTrivia = ${st}; _ctx._cstTriviaLog = ${stl}`)
   stmts.push(`${i}if (!${okVar}) ${failStmt({ ...ctx, indent: 0 }, '"node"', pos).trim()}`)
 
+  const stV = v(ctx, '_nst')
+  stmts.push(`${i}const ${stV} = _ctx.state !== undefined ? Object.assign({}, _ctx.state) : undefined`)
   const ndV = v(ctx, '_nd')
   const ndExpr = mkType
     ? emitInlineMkNodeExpr(mkType, chV, rawV, pos, endVar, tlV)
-    : `_build[${buildIdx!}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV})`
+    : `_build[${buildIdx!}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV}, ${stV})`
   stmts.push(
     `${i}const ${ndV} = ${ndExpr}`,
     `${i}if (${sc}) ${sc}.push(${ndV})`,

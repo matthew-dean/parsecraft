@@ -1,23 +1,5 @@
 /**
- * Functional incremental document — a class-free counterpart to ParseDoc.
- *
- * The class-based Parser bakes a rule registry (method name → combinator) and
- * a `rebuild()` hook into the grammar object. A *functional* grammar produces
- * the same two ingredients without a class:
- *
- *   - the registry is the object returned by `rules()` (rule name → parser fn),
- *     which the macro compiles to a map of independently-callable functions;
- *   - `rebuild` is supplied by the caller (or defaults to a shallow spread),
- *     since functional nodes are whatever the `transform()` callbacks produced.
- *
- * Given those, incremental re-parsing is identical in spirit to the class path:
- * locate the smallest node containing the edit, re-parse that single rule from
- * its start offset, and graft the result back into the tree if its end lands
- * where the edit's delta predicts.
- *
- * This module has no dependency on the `Parser` class — it is what lets the
- * class be removed once grammars move to the functional shape.
- */
+ * Functional incremental document — incremental re-parse over a rules() registry.
 import type { ParseContext, ParseFail, ParseResult } from '../types.ts'
 import type { NodeLike, CSTLeaf, CSTError } from '../cst/types.ts'
 
@@ -44,8 +26,7 @@ export interface FunctionalDoc<N extends NodeLike> {
   readonly input: string
   /**
    * Incrementally re-parse after a text change. `from`/`to` are byte offsets in
-   * the OLD input; `replacement` fills that range. Mirrors editor change events
-   * (see ParseDoc.edit for the mapping).
+   * the OLD input; `replacement` fills that range (editor change-event shape).
    */
   edit(from: number, to: number, replacement: string): FunctionalDoc<N>
 }

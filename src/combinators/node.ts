@@ -22,6 +22,7 @@ export type BuildNode<N> = (
   rawChildren: ReadonlyArray<unknown>,
   span: { start: number; end: number },
   triviaLog: readonly number[],
+  state: unknown,
 ) => N
 
 export function node<N>(type: string, parser: Combinator<unknown>, build: BuildNode<N>): Combinator<N> {
@@ -41,7 +42,10 @@ export function node<N>(type: string, parser: Combinator<unknown>, build: BuildN
 
       if (!r.ok) return r
 
-      const built = build(children, rawChildren, r.span, triviaLog)
+      const state = ctx.state !== undefined
+        ? Object.assign({}, ctx.state as Record<string, unknown>)
+        : undefined
+      const built = build(children, rawChildren, r.span, triviaLog, state)
       const isNodeLike = typeof built === 'object' && built !== null && (built as { _tag?: string })._tag === 'node'
       const rawEntry = isNodeLike
         ? built

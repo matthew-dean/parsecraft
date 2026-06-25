@@ -1,5 +1,5 @@
 /**
- * Functional-grammar proof (the shape that replaces `class extends Parser`).
+ * Functional-grammar proof — rules() + node()/transform() with macro compilation.
  *
  * A grammar authored as a `rules()` factory where each node-rule is a
  * `transform()` that builds a NodeLike AST node directly — no class, no
@@ -10,7 +10,7 @@
  *   2. Byte-identical output between the interpreter and the macro-compiled
  *      build (the same grammar source run both ways).
  *   3. Incremental re-parse via makeFunctionalDoc, driven by the rules() map as
- *      a rule registry — feature-parity with the class-based ParseDoc.
+ *      a rule registry.
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import {

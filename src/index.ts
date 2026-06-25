@@ -33,10 +33,7 @@ export { completionsAt } from './combinators/completions.ts'
 export { scanTo, balanced } from './combinators/scanTo.ts'
 export type { ScanToOptions } from './combinators/scanTo.ts'
 
-export { Parser } from './cst/grammar.ts'
-export type { Refs, RuleKeys } from './cst/grammar.ts'
 export type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTChild, CSTRawChild, NodeLike } from './cst/types.ts'
-export type { ParseDoc } from './cst/incremental.ts'
 
 export { makeFunctionalDoc } from './functional/doc.ts'
 export type { FunctionalDoc, FunctionalDocOptions, Registry, RuleFn } from './functional/doc.ts'

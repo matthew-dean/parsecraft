@@ -6,7 +6,7 @@ export type TriviaToken = { readonly value: string; readonly span: Span }
 /**
  * Before/after offset index of captured trivia. Built from a tree whose nodes
  * carry a `triviaLog` property (the flat `[start, end, insertIdx, ...]` array
- * produced by parseman when `_captureTrivia` is enabled on a `Parser` grammar).
+ * produced by parseman when `parser({ captureTrivia: true })` wraps a `node()` grammar).
  *
  *   index.before.get(node.span.start)  // trivia immediately before a node
  *   index.after.get(node.span.end)     // trivia immediately after a node
@@ -52,11 +52,11 @@ export type TriviaIndexOptions = {
 }
 
 /**
- * Walk a tree produced by a parseman `Parser` grammar (with `_captureTrivia`
- * enabled) and build a before/after trivia index. Each node must carry a
- * `triviaLog: readonly number[]` property (flat `[start, end, insertIdx, …]` —
- * three numbers per entry) and a `rawChildren` property (structural items
- * with `.span`). `input` is the source string used to materialize trivia values.
+ * Walk a tree whose nodes carry `triviaLog` (from `node()` + `captureTrivia`)
+ * and build a before/after trivia index. Each node must have
+ * `triviaLog: readonly number[]` (flat `[start, end, insertIdx, …]` —
+ * three numbers per entry) and `rawChildren` (structural items with `.span`).
+ * `input` is the source string used to materialize trivia values.
  *
  * With `opts`, also captures leading trivia (before the root's content) and
  * trailing trivia (after it, up to EOF) — the document boundaries a repeating

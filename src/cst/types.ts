@@ -1,14 +1,13 @@
 import type { Span } from '../types.ts'
 
 /**
- * Minimal interface a node must satisfy for IncrementalParser to navigate and
- * re-parse the tree. Satisfying this is all that's required for a custom AST
- * produced by overriding GrammarParser.buildNode().
+ * Minimal interface a node must satisfy for incremental re-parse to navigate and
+ * re-parse the tree. Any object with `_tag: 'node'`, `type`, `span`, `state`,
+ * and `children` works — whether from `node()` build callbacks or custom ASTs.
  *
- * `children` only needs to be iterable with items that have `_tag` so the
- * traversal code can distinguish sub-nodes from leaves. For incremental
- * replacement, `rebuild()` on the Parser calls `buildNode()` rather than
- * object-spreading, so overriding `buildNode` handles class instances correctly.
+ * `children` only needs items with `_tag` so traversal can distinguish sub-nodes
+ * from leaves. `makeFunctionalDoc` uses an optional `rebuild` callback (or a
+ * shallow spread) when grafting a re-parsed subtree.
  */
 export type NodeLike = {
   readonly _tag: 'node'
@@ -19,9 +18,8 @@ export type NodeLike = {
 }
 
 /**
- * A named CST node produced by a capital-letter rule method in GrammarParser.
- * Children are in parse order: CSTNode children from named sub-parser interspersed
- * with CSTLeaf terminals from literal() / regex() calls inside lowercase helpers.
+ * A named CST node from a `node()` rule (or equivalent build callback).
+ * Children are in parse order: sub-nodes interspersed with CSTLeaf terminals.
  */
 export type CSTNode = {
   readonly _tag: 'node'
@@ -38,9 +36,7 @@ export type CSTNode = {
 }
 
 /**
- * A terminal token — the result of a literal() or regex() match inside a CST rule.
- * Lowercase helpers are transparent: their terminals surface as leaves of the
- * nearest enclosing capital-letter rule.
+ * A terminal token — the result of a literal() or regex() match inside a node rule.
  */
 export type CSTLeaf = {
   readonly _tag: 'leaf'
