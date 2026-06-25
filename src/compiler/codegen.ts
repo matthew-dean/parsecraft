@@ -9,6 +9,12 @@
 import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ParseError, ChoiceStrategy } from '../types.ts'
 import { getCoreLiteralValue, getCoreRegexDef } from '../combinators/choice.ts'
 import { analyzeTriviaFastPath, buildFastTriviaFnDecl } from './trivia-fast-path.ts'
+import { analyzeMkInlineBuild, emitInlineMkNodeExpr } from './inline-build.ts'
+import {
+  transformFnSource,
+  tryInlineUnaryTransform,
+  tryInlineDestructureTransform,
+} from './inline-callback.ts'
 
 // ---------------------------------------------------------------------------
 // Codegen context
@@ -375,7 +381,7 @@ function emitRegex(def: Extract<ParserDef, { tag: 'regex' }>, ctx: Ctx, pos: str
   return { stmts, valueVar: vv, endVar }
 }
 
-function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER {
+function emitSeqValues(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER & { valueVars: string[] } {
   const startV = v(ctx, '_start')
   const curV = v(ctx, '_cur')
   const stmts: string[] = [
@@ -385,7 +391,6 @@ function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: st
   const valueVars: string[] = []
 
   for (let i = 0; i < def.parsers.length; i++) {
-    // Mirror interpreter sequence.ts:27 — skip trivia before each item except the first.
     if (i > 0 && ctx.activeTrivia) {
       if (ctx.capturing) {
         const capFn = ensureTriviaCaptureFn(ctx)
@@ -418,9 +423,14 @@ function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: st
     valueVars.push(r.valueVar)
   }
 
+  return { stmts, valueVar: valueVars[valueVars.length - 1] ?? 'null', endVar: curV, valueVars }
+}
+
+function emitSeq(def: Extract<ParserDef, { tag: 'sequence' }>, ctx: Ctx, pos: string): ER {
+  const { stmts, endVar, valueVars } = emitSeqValues(def, ctx, pos)
   const arrV = v(ctx, '_arr')
   stmts.push(`${ind(ctx)}const ${arrV} = [${valueVars.join(', ')}]`)
-  return { stmts, valueVar: arrV, endVar: curV }
+  return { stmts, valueVar: arrV, endVar }
 }
 
 function emitChoice(def: Extract<ParserDef, { tag: 'choice' }>, ctx: Ctx, pos: string): ER {
@@ -956,9 +966,13 @@ function emitNot(def: Extract<ParserDef, { tag: 'not' }>, ctx: Ctx, pos: string)
  * calls the build fn, then records the node in the enclosing node()'s collectors.
  */
 function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: string): ER {
-  const fnIdx = ctx.buildFns.length
-  ctx.buildFns.push(def.build)
-  ctx.buildSrcs.push(def.buildSrc ?? null)
+  const mkType = analyzeMkInlineBuild(def)
+  let buildIdx: number | null = null
+  if (!mkType) {
+    buildIdx = ctx.buildFns.length
+    ctx.buildFns.push(def.build)
+    ctx.buildSrcs.push(def.buildSrc ?? null)
+  }
   const i = ind(ctx)
 
   const chV = v(ctx, '_ch')
@@ -976,8 +990,11 @@ function emitNode(def: Extract<ParserDef, { tag: 'node' }>, ctx: Ctx, pos: strin
   stmts.push(`${i}if (!${okVar}) ${failStmt({ ...ctx, indent: 0 }, '"node"', pos).trim()}`)
 
   const ndV = v(ctx, '_nd')
+  const ndExpr = mkType
+    ? emitInlineMkNodeExpr(mkType, chV, rawV, pos, endVar, tlV)
+    : `_build[${buildIdx!}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV})`
   stmts.push(
-    `${i}const ${ndV} = _build[${fnIdx}](${chV}, ${rawV}, { start: ${pos}, end: ${endVar} }, ${tlV})`,
+    `${i}const ${ndV} = ${ndExpr}`,
     `${i}if (${sc}) ${sc}.push(${ndV})`,
     `${i}if (${sr}) ${sr}.push((typeof ${ndV} === 'object' && ${ndV} !== null && ${ndV}._tag === 'node') ? ${ndV} : { _tag: 'leaf', value: typeof ${ndV} === 'string' ? ${ndV} : '', span: { start: ${pos}, end: ${endVar} } })`,
   )
@@ -1092,7 +1109,31 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
     case 'optional':  return emitOptional(def, ctx, pos)
     case 'sepBy':     return emitSepBy(p, def, ctx, pos)
     case 'transform': {
+      const fnSrc = transformFnSource(def.fn, def.fnSrc)
+      if (fnSrc && def.parser._def.tag === 'sequence') {
+        const seqR = emitSeqValues(def.parser._def, ctx, pos)
+        const inlined = tryInlineDestructureTransform(fnSrc, seqR.valueVars)
+        if (inlined) {
+          const mv = v(ctx, '_mapped')
+          return {
+            stmts: [...seqR.stmts, `${ind(ctx)}const ${mv} = ${inlined}`],
+            valueVar: mv,
+            endVar: seqR.endVar,
+          }
+        }
+      }
       const inner = emit(def.parser, ctx, pos)
+      if (fnSrc) {
+        const unary = tryInlineUnaryTransform(fnSrc, inner.valueVar)
+        if (unary) {
+          const mv = v(ctx, '_mapped')
+          return {
+            stmts: [...inner.stmts, `${ind(ctx)}const ${mv} = ${unary}`],
+            valueVar: mv,
+            endVar: inner.endVar,
+          }
+        }
+      }
       const fnIdx = ctx.mapFns.length
       ctx.mapFns.push(def.fn)
       ctx.mapFnSrcs.push(def.fnSrc ?? null)

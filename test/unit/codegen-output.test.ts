@@ -237,9 +237,9 @@ const { expr } = rules(g => {
     expect(out).not.toContain('rules(')
     // Named function for recursion present
     expect(out).toContain('_pf0')
-    // Transform callbacks captured
-    expect(out).toContain('_mf')
-    expect(out).toContain('s => Number(s)')
-    expect(out).toContain('items ?? []')
+    // Transform callbacks inlined at call sites (no _mf indirection)
+    expect(out).not.toContain('_mf[')
+    expect(out).toContain('Number(')
+    expect(out).toContain('?? []')
   })
 })

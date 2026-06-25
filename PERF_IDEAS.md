@@ -12,6 +12,7 @@ Library-level opportunities for faster compiled parsers. Grammar authors can onl
 - **Log-only compiled trivia capture** — merged `_tcN` into `_tfN(…, cap?)`; ~6% bootstrap4 vs duplicate-tree `_tc`.
 - **Interpreter `node()` lazy capture** — `capture-buffer.ts`: defer `children`/`raw`/`tl` array alloc until first push; single-child scalar fast path.
 - **Trivia loop specialization** — `trivia-fast-path.ts`: hand-rolled `charCodeAt` loop for `oneOrMore(choice(ws, blockComment))` and ASCII ws-only trivia; CSS bootstrap4 compiled **−52%** (25.8→12.3ms).
+- **Transform / build inlining** — `inline-callback.ts`: paste unary and `sequence`+destructure transform bodies at call sites; GraphQL large compiled **−6%**. `inline-build.ts`: emit `mk()` CST nodes literally (CSS-neutral).
 
 ---
 
@@ -52,13 +53,15 @@ Moved to **Already landed**.
 
 ## Medium priority
 
-### 4. Fuse `sequence` + `transform`
+### ~~4. Fuse `sequence` + `transform`~~ (partial ✅)
 
-`transform(sequence(a, b, c), ([x, y, z]) => …)` currently builds `_arr = [v0, v1, v2]` then calls `_mf[i]`. Pattern-match at compile time: straight-line locals + inline transform body. No array, no indirect call.
+`transform(sequence(a, b, c), ([x, y, z]) => …)` with destructure-array `fnSrc` / arrow `toString()` now emits straight-line locals + inlined body — no `_arr`, no `_mf[n]`. Unary transforms (`s => parseInt(s, 10)`, object literals, etc.) also inline when closure-free.
 
-### 5. Inline transforms and builds at call sites
+**Result:** GraphQL large compiled **−6%** (149→138µs); medium **−5%**. Remaining: transforms whose body references outer scope or non-destructure params.
 
-Macro already captures `fnSrc` / `buildSrc` into `_mf` / `_build` arrays. For simple, closure-free bodies, paste the function body directly instead of `_mf[n](val, span)` / `_build[n](…)`.
+### ~~5. Inline transforms and builds at call sites~~ (partial ✅)
+
+Macro `fnSrc` / `buildSrc` and runtime `toString()` for arrow builds. Landed: transform inlining (§4), CSS `mk(type,…)` literal emission (`inline-build.ts`, **neutral** on bootstrap4 — removes `_build` indirection but no measurable CSS win). Remaining: general `buildSrc` object-literal inlining for non-`mk` grammars.
 
 ### ~~6. Trivia loop specialization~~ ✅
 
