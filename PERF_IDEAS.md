@@ -11,6 +11,7 @@ Library-level opportunities for faster compiled parsers. Grammar authors can onl
 - **Choice fast paths in CST grammars** — `emitGreedyClassify` / `emitLiteralsLongestFirst` with `emitLeafCapture` in capturing compiles.
 - **Log-only compiled trivia capture** — merged `_tcN` into `_tfN(…, cap?)`; ~6% bootstrap4 vs duplicate-tree `_tc`.
 - **Interpreter `node()` lazy capture** — `capture-buffer.ts`: defer `children`/`raw`/`tl` array alloc until first push; single-child scalar fast path.
+- **Trivia loop specialization** — `trivia-fast-path.ts`: hand-rolled `charCodeAt` loop for `oneOrMore(choice(ws, blockComment))` and ASCII ws-only trivia; CSS bootstrap4 compiled **−52%** (25.8→12.3ms).
 
 ---
 
@@ -59,9 +60,11 @@ Moved to **Already landed**.
 
 Macro already captures `fnSrc` / `buildSrc` into `_mf` / `_build` arrays. For simple, closure-free bodies, paste the function body directly instead of `_mf[n](val, span)` / `_build[n](…)`.
 
-### 6. Trivia loop specialization
+### ~~6. Trivia loop specialization~~ ✅
 
-When `parser({ trivia: ws }, root)` is macro-compiled and trivia is a simple `regex(/…*/)` or literal run, inline a tight `charCodeAt` skip loop instead of calling `_tfN` / `_tcN` between every sequence term.
+When trivia is `oneOrMore(choice(ws, blockComment))` (CSS `rw`) or ASCII ws-only, emit a hand-rolled `charCodeAt` scan in `_tfN` instead of regex / combinator dispatch. Single alternation regexes are excluded — one `RegExp.exec` matches only one arm per call.
+
+**Result:** CSS bootstrap4 compiled **−52%** (25.8→12.3ms); selector/decls **−43–47%**. See `src/compiler/trivia-fast-path.ts`, `test/unit/trivia-fast-path.test.ts`.
 
 ### 7. Common-prefix choice factoring
 

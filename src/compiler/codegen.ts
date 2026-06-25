@@ -8,6 +8,7 @@
  */
 import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ParseError, ChoiceStrategy } from '../types.ts'
 import { getCoreLiteralValue, getCoreRegexDef } from '../combinators/choice.ts'
+import { analyzeTriviaFastPath, buildFastTriviaFnDecl } from './trivia-fast-path.ts'
 
 // ---------------------------------------------------------------------------
 // Codegen context
@@ -147,6 +148,12 @@ function ensureTriviaFn(ctx: Ctx): string {
   const fnName = `_tf${ctx.triviaFnNames.size}`
   ctx.triviaFnNames.set(trivia, fnName)
   ctx.triviaCaptureNames.set(trivia, fnName)
+
+  const fastKind = analyzeTriviaFastPath(trivia)
+  if (fastKind) {
+    ctx.namedFnDecls.push(buildFastTriviaFnDecl(fnName, fastKind))
+    return fnName
+  }
 
   const savedIndent    = ctx.indent
   const savedFailLabel = ctx.failLabel
