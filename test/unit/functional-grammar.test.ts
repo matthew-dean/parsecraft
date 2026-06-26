@@ -112,7 +112,7 @@ describe('functional grammar — interpreter vs macro parity', () => {
   for (const input of INPUTS) {
     it(`identical AST for ${input}`, () => {
       const i = parse(interp.Object, input)
-      const m = macroRegistry.Object(input, 0, { trackLines: false })
+      const m = macroRegistry.Object!(input, 0, { trackLines: false })
       expect(i.ok).toBe(true)
       expect(m.ok).toBe(true)
       if (i.ok && m.ok) {
@@ -122,7 +122,7 @@ describe('functional grammar — interpreter vs macro parity', () => {
   }
 
   it('node spans are correct absolute offsets', () => {
-    const r = macroRegistry.Object('{ab:12}', 0, { trackLines: false })
+    const r = macroRegistry.Object!('{ab:12}', 0, { trackLines: false })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     const obj = r.value
@@ -143,7 +143,8 @@ describe('functional grammar — interpreter vs macro parity', () => {
 // ---------------------------------------------------------------------------
 
 function pairsOf(tree: Node | null): Node[] {
-  return tree ? tree.children.filter(c => c.type === 'Pair') : []
+  if (!tree) return []
+  return (tree.children as Node[]).filter(c => c.type === 'Pair')
 }
 
 // ---------------------------------------------------------------------------
@@ -306,11 +307,11 @@ const { Num, Body } = rules(g => {
     const reg = new Function(fnBody)() as Record<string, RuleFn>
 
     // not(): '12' parses, '12px' fails (digit followed by letter)
-    expect(reg.Num('12', 0, { trackLines: false }).ok).toBe(true)
-    expect(reg.Num('12px', 0, { trackLines: false }).ok).toBe(false)
+    expect(reg['Num']!('12', 0, { trackLines: false }).ok).toBe(true)
+    expect(reg['Num']!('12px', 0, { trackLines: false }).ok).toBe(false)
     // scanTo()+balanced(): stops just before the matching outer ')', having
     // skipped the inner '(b)' pair so its ')' isn't mistaken for the sentinel.
-    const b = reg.Body('a(b)c)', 0, { trackLines: false })
+    const b = reg['Body']!('a(b)c)', 0, { trackLines: false })
     expect(b.ok).toBe(true)
     if (b.ok) {
       expect(b.span.end).toBe(5)   // 'a(b)c' consumed; sentinel ')' not included

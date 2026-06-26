@@ -26,7 +26,7 @@ function mkRich(
     span,
     state,
     children: [...children],
-    rawChildren: rawChildren as { span: Span }[],
+    rawChildren: [...rawChildren],
     triviaLog,
   }
 }
@@ -36,9 +36,9 @@ const triviaPat = regex(/[ \t\n]+|\/\*[^]*?\*\//)
 
 const { Ident, Pair } = rules(g => {
   const Ident = node('Ident', ident, (ch, raw, span, tl, state) =>
-    mkRich('Ident', ch as RichNode[], raw, span, tl, state))
+    mkRich('Ident', ch as RichNode[], raw as CSTRawChild[], span, tl, state))
   const Pair = node('Pair', sequence(g.Ident, g.Ident), (ch, raw, span, tl, state) =>
-    mkRich('Pair', ch as RichNode[], raw, span, tl, state))
+    mkRich('Pair', ch as RichNode[], raw as CSTRawChild[], span, tl, state))
   return { Ident, Pair }
 })
 

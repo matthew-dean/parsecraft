@@ -63,7 +63,7 @@ describe('guard() codegen', () => {
     )
     const r = p.parse('ok')
     expect(r.ok).toBe(true)
-    if (r.ok) expect(r.value[1]).toBe('ok')
+    if (r.ok) expect((r.value as [unknown, string])[1]).toBe('ok')
   })
 })
 
@@ -109,8 +109,8 @@ describe('withCtx() codegen', () => {
     const rt = parse(withCtx<S, unknown>({ on: true }, sequence(guardOn, literal('a'))), 'a')
     const cmp = p.parse('a')
     expect(rt.ok).toBe(cmp.ok)
-    expect(rt.ok && rt.value[1]).toBe('a')
-    expect(cmp.ok && cmp.value[1]).toBe('a')
+    if (rt.ok) expect((rt.value as [unknown, string])[1]).toBe('a')
+    if (cmp.ok) expect((cmp.value as [unknown, string])[1]).toBe('a')
   })
 
   it('nested withCtx compiles correctly', () => {

@@ -1,8 +1,8 @@
 /**
- * Precompile vendored Jison grammars to bench/*-jison.js (CommonJS).
+ * Precompile vendored Jison grammars to bench/*-jison.cjs (CommonJS).
  */
 import { createRequire } from 'node:module'
-import { writeFileSync, copyFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -31,11 +31,9 @@ function compileJison(grammarPath, outBase) {
       moduleName: outBase,
     }).generate(),
   )
-  const outJs = join(__dirname, `${outBase}.js`)
   const outCjs = join(__dirname, `${outBase}.cjs`)
-  writeFileSync(outJs, code)
-  copyFileSync(outJs, outCjs)
-  console.log(`wrote bench/${outBase}.js (+ .cjs)`)
+  writeFileSync(outCjs, code)
+  console.log(`wrote bench/${outBase}.cjs`)
 }
 
 compileJison(join(__dirname, 'vendor/jison/json-grammar.cjs'), 'json-jison')

@@ -20,8 +20,11 @@ import {
   node, regex, literal, sequence, many, optional, sepBy, choice, compile, parse,
 } from '../../src/index.ts'
 
-const leaves = (children: ReadonlyArray<{ _tag: string; value?: unknown }>) =>
-  children.filter(c => c._tag === 'leaf').map(c => c.value)
+const leaves = (children: ReadonlyArray<unknown>) =>
+  children
+    .filter((c): c is { _tag: string; value?: unknown } =>
+      typeof c === 'object' && c !== null && (c as { _tag?: string })._tag === 'leaf')
+    .map(c => c.value)
 
 const name = regex(/[a-z]+/)
 const key = regex(/[a-z]+/)

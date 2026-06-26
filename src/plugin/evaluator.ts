@@ -169,6 +169,16 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
   // rules(factory) — handled separately by evaluateParserFactory; signal null here
   if (callee.name === 'rules') return null
 
+  // ref() — forward-declared recursion slot. Standalone refs (declared, then
+  // resolved later via `x.define(...)`) are the interpreter/compile() recursion
+  // mechanism; the macro must support them too for parity. We return a REAL ref
+  // placeholder here; index.ts pre-resolves all `x.define(...)` statements into
+  // scope before compilation so codegen's emitLazy sees a defined thunk.
+  if (callee.name === 'ref') {
+    if (node.arguments.length !== 0) return null
+    return ref<unknown>() as Combinator<unknown>
+  }
+
   // parser(opts, root) — bakes trivia/trackLines into a `grammar` combinator so
   // the compiled output skips whitespace between sequence terms identically to
   // the interpreter. opts.trivia is itself a combinator; evaluate it with a
@@ -221,14 +231,20 @@ function exprToCombi(node: Expression, scope: XScope, code?: string, mfs?: strin
     try { return parseman.not(inner) } catch { return null }
   }
 
-  // balanced(open, close) — a scanTo def used as a scanTo skipper.
+  // balanced(open, close, opts?) — like scanTo, opts (notably opts.skip, an array
+  // of combinators) MUST be honored. The interpreter and compile() build the full
+  // combinator structure from opts; the macro must evaluate and pass opts too —
+  // dropping it silently produces wrong (parity-breaking) behavior.
   if (callee.name === 'balanced') {
-    const [openArg, closeArg] = node.arguments
+    const [openArg, closeArg, optsArg] = node.arguments
     if (!openArg || !closeArg || openArg.type === 'SpreadElement' || closeArg.type === 'SpreadElement') return null
     const open = anyValue(openArg as Expression, scope, code, [])
     const close = anyValue(closeArg as Expression, scope, code, [])
     if (typeof open !== 'string' || typeof close !== 'string') return null
-    try { return parseman.balanced(open, close) } catch { return null }
+    const opts = optsArg && optsArg.type !== 'SpreadElement'
+      ? anyValue(optsArg as Expression, scope, code, [])
+      : undefined
+    try { return parseman.balanced(open, close, opts as parseman.ScanToOptions | undefined) } catch { return null }
   }
 
   // scanTo(sentinel, opts?) — consume up to (and including) a sentinel, optionally
@@ -489,6 +505,67 @@ export function evaluateParserFactory(
   }
 
   return ruleRefs as Map<string, Combinator<unknown>>
+}
+
+/** A combinator slot created by ref() — has a callable `define`. */
+type DefinableRef = Combinator<unknown> & { define(p: Combinator<unknown>): void }
+
+function isDefinableRef(v: unknown): v is DefinableRef {
+  return isCombinator(v)
+    && typeof (v as { define?: unknown }).define === 'function'
+    && (v as { _def: { tag?: string } })._def.tag === 'lazy'
+}
+
+/**
+ * If `init` is a bare `ref()` call, evaluate it to a real ref placeholder and
+ * register it in scope under `name`. Returns the ref, or null if `init` isn't
+ * a `ref()` call. Used by the macro pre-pass so standalone refs resolve before
+ * compilation (parity with the interpreter / compile()).
+ */
+export function evaluateRefDeclaration(
+  init: Expression,
+  name: string,
+  scope: Scope,
+): DefinableRef | null {
+  if (init.type !== 'CallExpression') return null
+  const callee = (init as unknown as { callee: { type: string; name?: string } }).callee
+  if (callee.type !== 'Identifier' || callee.name !== 'ref') return null
+  if ((init as unknown as { arguments: unknown[] }).arguments.length !== 0) return null
+  const slot = ref<unknown>() as DefinableRef
+  ;(scope as XScope).set(name, { combi: slot, mfSrcs: [] } satisfies ScopeEntry)
+  return slot
+}
+
+/**
+ * Apply a `someRef.define(expr)` statement: resolve the target ref from scope,
+ * evaluate the argument to a combinator, and call `.define()`. Returns true on
+ * success. The macro removes the original statement from the output (it would
+ * otherwise reference the stripped import); returning false signals "leave it".
+ */
+export function applyDefineStatement(
+  callExpr: Expression,
+  scope: Scope,
+  code: string,
+): boolean {
+  if (callExpr.type !== 'CallExpression') return false
+  const callee = (callExpr as unknown as { callee: { type: string } }).callee
+  if (callee.type !== 'MemberExpression') return false
+  const mem = callee as unknown as { object: { type: string; name?: string }; property: { type: string; name?: string }; computed: boolean }
+  if (mem.computed) return false
+  if (mem.property.type !== 'Identifier' || mem.property.name !== 'define') return false
+  if (mem.object.type !== 'Identifier' || !mem.object.name) return false
+
+  const target = (scope as XScope).get(mem.object.name)
+  const refCombi = isScopeEntry(target) ? target.combi : (isCombinator(target) ? target : null)
+  if (!refCombi || !isDefinableRef(refCombi)) return false
+
+  const args = (callExpr as unknown as { arguments: Array<{ type: string }> }).arguments
+  if (args.length !== 1 || args[0]!.type === 'SpreadElement') return false
+  const inner = anyValue(args[0] as unknown as Expression, scope as XScope, code, [])
+  if (!isCombinator(inner)) return false
+
+  try { refCombi.define(inner) } catch { return false }
+  return true
 }
 
 /** Check if an AST node references any name from the given scope or names set. */

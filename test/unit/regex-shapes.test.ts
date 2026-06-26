@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest'
 import { regex, literal, choice, sequence, transform, not, parse, compile } from '../../src/index.ts'
 import type { Combinator } from '../../src/index.ts'
+import { parseValue } from '../helpers/parse-result.ts'
 
 // ---------------------------------------------------------------------------
 // Helper: compiler parity
@@ -93,8 +94,8 @@ describe('regex first-set — optional prefix', () => {
 
   it('-?[0-9]+ parses both -42 and 42 correctly', () => {
     const p = regex(/-?[0-9]+/)
-    expect(parse(p, '-42').ok && parse(p, '-42').value).toBe('-42')
-    expect(parse(p, '42').ok && parse(p, '42').value).toBe('42')
+    expect(parseValue(p, '-42')).toBe('-42')
+    expect(parseValue(p, '42')).toBe('42')
     expect(parse(p, 'abc').ok).toBe(false)
   })
 
@@ -103,9 +104,9 @@ describe('regex first-set — optional prefix', () => {
     const num = transform(regex(/-?[0-9]+/), parseFloat)
     const str = transform(sequence(literal('"'), regex(/[^"]*/), literal('"')), ([, s]) => s)
     const p = choice(str, num)
-    expect(parse(p, '42').ok && parse(p, '42').value).toBe(42)
-    expect(parse(p, '-1').ok && parse(p, '-1').value).toBe(-1)
-    expect(parse(p, '"hello"').ok && parse(p, '"hello"').value).toBe('hello')
+    expect(parseValue(p, '42')).toBe(42)
+    expect(parseValue(p, '-1')).toBe(-1)
+    expect(parseValue(p, '"hello"')).toBe('hello')
   })
 })
 
@@ -124,8 +125,8 @@ describe('regex first-set — alternation', () => {
 
   it('alternation parses both branches', () => {
     const p = regex(/foo|bar/)
-    expect(parse(p, 'foo').ok && parse(p, 'foo').value).toBe('foo')
-    expect(parse(p, 'bar').ok && parse(p, 'bar').value).toBe('bar')
+    expect(parseValue(p, 'foo')).toBe('foo')
+    expect(parseValue(p, 'bar')).toBe('bar')
     expect(parse(p, 'baz').ok).toBe(false)
   })
 })
@@ -141,9 +142,9 @@ describe('regex negative lookahead (?!...)', () => {
 
   it('(?!\\w) prevents matching keyword as prefix of longer word', () => {
     const p = regex(/if(?!\w)/)
-    expect(parse(p, 'if ').ok && parse(p, 'if ').value).toBe('if')
-    expect(parse(p, 'if(').ok && parse(p, 'if(').value).toBe('if')
-    expect(parse(p, 'if').ok && parse(p, 'if').value).toBe('if')   // end of input
+    expect(parseValue(p, 'if ')).toBe('if')
+    expect(parseValue(p, 'if(')).toBe('if')
+    expect(parseValue(p, 'if')).toBe('if')   // end of input
     expect(parse(p, 'ifdef').ok).toBe(false)  // 'd' is a word char
     expect(parse(p, 'iffy').ok).toBe(false)   // 'f' is a word char
   })
@@ -181,14 +182,14 @@ describe('regex negative lookahead (?!...)', () => {
 
     const token = choice(kwIf, kwElse, kwReturn, ident)
 
-    expect(parse(token, 'if').ok && parse(token, 'if').value).toBe('if')
-    expect(parse(token, 'else').ok && parse(token, 'else').value).toBe('else')
-    expect(parse(token, 'return').ok && parse(token, 'return').value).toBe('return')
+    expect(parseValue(token, 'if')).toBe('if')
+    expect(parseValue(token, 'else')).toBe('else')
+    expect(parseValue(token, 'return')).toBe('return')
     // These should fall through to ident:
-    expect(parse(token, 'ifdef').ok && parse(token, 'ifdef').value).toBe('ifdef')
-    expect(parse(token, 'elsewhere').ok && parse(token, 'elsewhere').value).toBe('elsewhere')
-    expect(parse(token, 'returns').ok && parse(token, 'returns').value).toBe('returns')
-    expect(parse(token, 'iffy').ok && parse(token, 'iffy').value).toBe('iffy')
+    expect(parseValue(token, 'ifdef')).toBe('ifdef')
+    expect(parseValue(token, 'elsewhere')).toBe('elsewhere')
+    expect(parseValue(token, 'returns')).toBe('returns')
+    expect(parseValue(token, 'iffy')).toBe('iffy')
   })
 
   it('negative lookahead regex — compiler parity', () => {
@@ -263,27 +264,28 @@ describe('regex quantifiers', () => {
   it('* (zero or more) — matches empty', () => {
     const p = regex(/[0-9]*/)
     expect(parse(p, '').ok).toBe(true)
-    expect(parse(p, 'abc').ok && parse(p, 'abc').value).toBe('')
-    expect(parse(p, '123').ok && parse(p, '123').value).toBe('123')
+    expect(parse(p, 'abc').ok).toBe(true)
+    expect(parseValue(p, 'abc')).toBe('')
+    expect(parseValue(p, '123')).toBe('123')
   })
 
   it('+ (one or more) — fails on empty', () => {
     const p = regex(/[0-9]+/)
     expect(parse(p, '').ok).toBe(false)
-    expect(parse(p, '123').ok && parse(p, '123').value).toBe('123')
+    expect(parseValue(p, '123')).toBe('123')
   })
 
   it('? (zero or one)', () => {
     const p = regex(/-?[0-9]/)
-    expect(parse(p, '5').ok && parse(p, '5').value).toBe('5')
-    expect(parse(p, '-5').ok && parse(p, '-5').value).toBe('-5')
+    expect(parseValue(p, '5')).toBe('5')
+    expect(parseValue(p, '-5')).toBe('-5')
   })
 
   it('{n,m} range', () => {
     const p = regex(/[0-9]{2,4}/)
     expect(parse(p, '1').ok).toBe(false)
-    expect(parse(p, '12').ok && parse(p, '12').value).toBe('12')
-    expect(parse(p, '12345').ok && parse(p, '12345').value).toBe('1234')  // max 4
+    expect(parseValue(p, '12')).toBe('12')
+    expect(parseValue(p, '12345')).toBe('1234')  // max 4
   })
 
   it('quantifier parity', () => {
@@ -308,17 +310,17 @@ describe('regex groups', () => {
 
   it('non-capturing group (?:...)', () => {
     const p = regex(/(?:foo|bar)baz/)
-    expect(parse(p, 'foobaz').ok && parse(p, 'foobaz').value).toBe('foobaz')
-    expect(parse(p, 'barbaz').ok && parse(p, 'barbaz').value).toBe('barbaz')
+    expect(parseValue(p, 'foobaz')).toBe('foobaz')
+    expect(parseValue(p, 'barbaz')).toBe('barbaz')
     expect(parse(p, 'quxbaz').ok).toBe(false)
   })
 
   it('optional group (?:...)?', () => {
     // The optional group makes the whole thing matchable from multiple first chars
     const p = regex(/(?:https?:\/\/)?[a-z]+/)
-    expect(parse(p, 'example').ok && parse(p, 'example').value).toBe('example')
-    expect(parse(p, 'http://example').ok && parse(p, 'http://example').value).toBe('http://example')
-    expect(parse(p, 'https://example').ok && parse(p, 'https://example').value).toBe('https://example')
+    expect(parseValue(p, 'example')).toBe('example')
+    expect(parseValue(p, 'http://example')).toBe('http://example')
+    expect(parseValue(p, 'https://example')).toBe('https://example')
   })
 
   it('group parity', () => {

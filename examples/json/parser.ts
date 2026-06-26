@@ -67,7 +67,10 @@ export const jsonString = transform(
 // ---------------------------------------------------------------------------
 // Recursive grammar
 // ---------------------------------------------------------------------------
-export type JSONValue = null | boolean | number | string | JSONValue[] | Record<string, JSONValue>
+export type JSONScalar = null | boolean | number | string
+export interface JSONArray extends ReadonlyArray<JSONValue> {}
+export interface JSONObject extends Readonly<Record<string, JSONValue>> {}
+export type JSONValue = JSONScalar | JSONArray | JSONObject
 
 // rules() defines the mutually recursive portion. Local helpers (comma, key, pair)
 // are plain consts inside the factory — they don't need to appear in the returned

@@ -72,12 +72,13 @@ const { gqlType } = rules<{ gqlType: Combinator<GQLType> }>(g => {
 // ---------------------------------------------------------------------------
 // Values (recursive)
 // ---------------------------------------------------------------------------
-export type GQLValue =
+export type GQLScalar = number | string | boolean | null
+export type GQLObject =
   | { kind: 'Variable'; name: string }
-  | number | string | boolean | null
   | { kind: 'EnumValue'; value: string }
-  | GQLValue[]
-  | Record<string, GQLValue>
+export interface GQLArray extends ReadonlyArray<GQLValue> {}
+export interface GQLRecord extends Readonly<Record<string, GQLValue>> {}
+export type GQLValue = GQLScalar | GQLObject | GQLArray | GQLRecord
 
 const { gqlValue } = rules<{ gqlValue: Combinator<GQLValue> }>(g => {
   const variable = transform(

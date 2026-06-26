@@ -100,11 +100,14 @@ describe('guard() + withCtx() — practical: indent-sensitive parsing', () => {
   // A "line at indent >= N" parser: checks indent, parses content
   const lineAt = (n: number) => withCtx<IndentCtx, string>(
     { minIndent: n },
-    sequence(
-      guard(u => (u as IndentCtx).minIndent <= n),
-      literal('  '.repeat(n)),    // exactly n*2 spaces of indent
-      transform(literal('line'), v => v),
-    )
+    transform(
+      sequence(
+        guard(u => (u as IndentCtx).minIndent <= n),
+        literal('  '.repeat(n)),    // exactly n*2 spaces of indent
+        literal('line'),
+      ),
+      ([, , line]) => line,
+    ),
   )
 
   it('parses line at correct indent level', () => {

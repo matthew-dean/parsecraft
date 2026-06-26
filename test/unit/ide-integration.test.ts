@@ -58,9 +58,11 @@ describe('recover() + parse({ recover: true })', () => {
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.errors).toHaveLength(1)
-      expect(r.errors![0]._tag).toBe('parseError')
-      expect(r.errors![0].span.start).toBe(0)
-      expect(r.errors![0].expected.length).toBeGreaterThan(0)
+      const err = r.errors![0]
+      expect(err).toBeDefined()
+      expect(err!._tag).toBe('parseError')
+      expect(err!.span.start).toBe(0)
+      expect(err!.expected.length).toBeGreaterThan(0)
     }
   })
 
@@ -118,7 +120,9 @@ describe('compile().parseWithErrors()', () => {
   it('collects errors from recover() nodes', () => {
     const r = compiled.parseWithErrors('abc')
     expect(r.errors.length).toBeGreaterThanOrEqual(1)
-    expect(r.errors[0]._tag).toBe('parseError')
+    const err = r.errors[0]
+    expect(err).toBeDefined()
+    expect(err!._tag).toBe('parseError')
   })
 })
 

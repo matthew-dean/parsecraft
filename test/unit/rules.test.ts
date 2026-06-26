@@ -180,7 +180,7 @@ describe('rules() — non-recursive parser stored directly', () => {
       word:  w,
       words: transform(
         sequence(g.word, many(sequence(literal(' '), g.word))),
-        ([first, rest]: [string, [string, string][]]) => [first, ...rest.map(([, w]) => w)]
+        ([first, rest]) => [first as string, ...(rest as [string, string][]).map(([, w]) => w)],
       ),
     }
   })

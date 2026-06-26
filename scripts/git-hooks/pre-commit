@@ -1,18 +1,26 @@
 #!/bin/sh
-# Parseman pre-commit perf guard.
+# Pre-commit guards: typecheck, oxlint, and optional perf regression check.
 #
-# Blocks a commit when the machine-INDEPENDENT compiled speedup ratio
-# (interpreted/compiled) drops materially below the committed baseline — i.e. a
-# real codegen regression, not a slow machine. Runs the fast css-only path
-# (~1-2s). Set SKIP_PERF_GUARD=1 to bypass (e.g. WIP commits), or re-baseline
-# with `pnpm bench:baseline` after an intentional perf change.
-#
-# Only runs when the codegen / combinators / compiled examples are touched, so
-# unrelated commits aren't slowed down.
+# Set SKIP_TYPECHECK=1 or SKIP_LINT=1 to bypass individual guards.
+# Set SKIP_PERF_GUARD=1 to bypass the perf guard (e.g. WIP commits).
 
-[ "$SKIP_PERF_GUARD" = "1" ] && exit 0
+set -e
 
-# Limit to commits that can actually affect compiled output.
+if [ "$SKIP_TYPECHECK" != "1" ]; then
+  echo "[pre-commit] running tsc…"
+  pnpm typecheck
+fi
+
+if [ "$SKIP_LINT" != "1" ]; then
+  echo "[pre-commit] running oxlint…"
+  pnpm lint
+fi
+
+if [ "$SKIP_PERF_GUARD" = "1" ]; then
+  exit 0
+fi
+
+# Limit perf guard to commits that can actually affect compiled output.
 CHANGED=$(git diff --cached --name-only)
 echo "$CHANGED" | grep -qE '^(src/compiler/|src/combinators/|src/cst/|examples/.*/parser\.ts|bench/parseman-perf\.ts)' || exit 0
 

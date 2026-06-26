@@ -14,6 +14,7 @@
 import {
   literal, regex, sequence, choice, many, optional, transform,
   trivia, parser, compile,
+  type Combinator,
 } from '../../src/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ const entryLine = transform(
   ([k, , v]): Entry => ({ type: 'entry', key: k.trim(), value: typeof v === 'string' ? v.trim() : v })
 )
 
-const line: typeof commentLine = choice(commentLine, sectionLine, entryLine)
+const line: Combinator<Line> = choice(commentLine, sectionLine, entryLine)
 
 const configParser = parser({ trivia: ws }, many(line))
 

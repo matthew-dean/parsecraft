@@ -1,0 +1,3 @@
+bench/*.cjs
+bench/*-parser.js
+bench/chevrotain-graphql.js

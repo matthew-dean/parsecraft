@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { literal, regex, choice, sequence, transform, not, parse, compile } from '../../src/index.ts'
+import { parseValue } from '../helpers/parse-result.ts'
 
 // ---------------------------------------------------------------------------
 // Longest match: more input consumed wins
@@ -113,9 +114,9 @@ describe('longest-match — shared prefix', () => {
   it('three-way prefix: any order works — instanceof / in / if', () => {
     // All start with 'i'. With longest-match, any ordering produces correct results.
     const p = choice(literal('in'), literal('instanceof'), literal('if'))  // "wrong" order
-    expect(parse(p, 'instanceof').ok && parse(p, 'instanceof').value).toBe('instanceof')
-    expect(parse(p, 'in').ok && parse(p, 'in').value).toBe('in')
-    expect(parse(p, 'if').ok && parse(p, 'if').value).toBe('if')
+    expect(parseValue(p, 'instanceof')).toBe('instanceof')
+    expect(parseValue(p, 'in')).toBe('in')
+    expect(parseValue(p, 'if')).toBe('if')
   })
 })
 
@@ -143,21 +144,21 @@ describe('keyword disambiguation without not()', () => {
   it('choice(ident, literal): same result regardless of order', () => {
     // Putting ident first should not change the outcome
     const p = choice(ident, literal('if'))
-    expect(parse(p, 'if').ok && parse(p, 'if').value).toBe('if')
-    expect(parse(p, 'ifdef').ok && parse(p, 'ifdef').value).toBe('ifdef')
-    expect(parse(p, 'hello').ok && parse(p, 'hello').value).toBe('hello')
+    expect(parseValue(p, 'if')).toBe('if')
+    expect(parseValue(p, 'ifdef')).toBe('ifdef')
+    expect(parseValue(p, 'hello')).toBe('hello')
   })
 
   it('multi-keyword: any order, no not() needed', () => {
     const p = choice(literal('if'), literal('else'), literal('return'), ident)
-    expect(parse(p, 'if').ok && parse(p, 'if').value).toBe('if')
-    expect(parse(p, 'else').ok && parse(p, 'else').value).toBe('else')
-    expect(parse(p, 'return').ok && parse(p, 'return').value).toBe('return')
+    expect(parseValue(p, 'if')).toBe('if')
+    expect(parseValue(p, 'else')).toBe('else')
+    expect(parseValue(p, 'return')).toBe('return')
     // Identifiers that START with a keyword should fall through to ident
-    expect(parse(p, 'ifdef').ok && parse(p, 'ifdef').value).toBe('ifdef')
-    expect(parse(p, 'elsewhere').ok && parse(p, 'elsewhere').value).toBe('elsewhere')
-    expect(parse(p, 'returns').ok && parse(p, 'returns').value).toBe('returns')
-    expect(parse(p, 'iffy').ok && parse(p, 'iffy').value).toBe('iffy')
+    expect(parseValue(p, 'ifdef')).toBe('ifdef')
+    expect(parseValue(p, 'elsewhere')).toBe('elsewhere')
+    expect(parseValue(p, 'returns')).toBe('returns')
+    expect(parseValue(p, 'iffy')).toBe('iffy')
   })
 })
 

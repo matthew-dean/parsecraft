@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { buildNearleyParser, createNearleyParser } from './nearley-parse.ts'
 
 const require = createRequire(import.meta.url)
-const compiled = require('./csv-nearley.js')
+const compiled = require('./csv-nearley.cjs')
 
 export function buildNearleyCSV(): (input: string) => unknown {
   return buildNearleyParser(compiled)

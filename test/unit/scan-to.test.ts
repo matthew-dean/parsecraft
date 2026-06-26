@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { literal, regex, sequence, choice, transform, parse, parser, compile, trivia } from '../../src/index.ts'
 import { scanTo, balanced } from '../../src/index.ts'
+import { parseValue } from '../helpers/parse-result.ts'
 
 // ---------------------------------------------------------------------------
 // Basic scanTo
@@ -134,10 +135,10 @@ describe('balanced()', () => {
     // balanced() skips nested same-delimiter pairs via an internal self-reference,
     // so the FIRST close no longer wins — depth is respected.
     const p = balanced('(', ')')
-    expect(parse(p, '(a(b)c)').value).toBe('(a(b)c)')
-    expect(parse(p, '(a(b(c))d)').value).toBe('(a(b(c))d)')
-    expect(parse(balanced('{', '}'), '{{x}}').value).toBe('{{x}}')
-    expect(parse(balanced('{', '}'), '{{{deep}}}').value).toBe('{{{deep}}}')
+    expect(parseValue(p, '(a(b)c)')).toBe('(a(b)c)')
+    expect(parseValue(p, '(a(b(c))d)')).toBe('(a(b(c))d)')
+    expect(parseValue(balanced('{', '}'), '{{x}}')).toBe('{{x}}')
+    expect(parseValue(balanced('{', '}'), '{{{deep}}}')).toBe('{{{deep}}}')
   })
 
   it('handles well-formed mixed-delimiter nesting', () => {

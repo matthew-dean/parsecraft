@@ -20,7 +20,7 @@
 import { createUnplugin } from 'unplugin'
 import { parseSync } from 'oxc-parser'
 import MagicString from 'magic-string'
-import { evaluateExpr, evaluateParserFactory, evaluateWordFactory, referencesAny, type Scope, type ScopeEntry } from './evaluator.ts'
+import { evaluateExpr, evaluateParserFactory, evaluateWordFactory, evaluateRefDeclaration, applyDefineStatement, referencesAny, type Scope, type ScopeEntry } from './evaluator.ts'
 import { compile } from '../compiler/codegen.ts'
 import type { Combinator } from '../types.ts'
 import type {
@@ -171,6 +171,73 @@ export function transformMacro(
     (init as unknown as { callee: { type: string; name?: string } }).callee.type === 'Identifier' &&
     (init as unknown as { callee: { name?: string } }).callee.name === 'rules'
 
+  // --- Pre-pass: resolve standalone ref() recursion clusters ---
+  // `const x = ref()` … `x.define(expr)` is the interpreter/compile() recursion
+  // mechanism. The macro must support it for parity: evaluate every ref slot and
+  // apply every `.define(...)` into scope BEFORE the main loop compiles anything,
+  // so codegen's emitLazy sees a defined thunk (otherwise it falls back to the
+  // interpreter). `.define(...)` statements are stripped from the output since
+  // they reference the now-removed import. Only a ref whose define resolves is
+  // treated as a macro ref; an unresolved one falls through to the normal warn().
+  const unwrapVd = (stmt: Statement): VariableDeclaration | null =>
+    stmt.type === 'VariableDeclaration'
+      ? (stmt as unknown as VariableDeclaration)
+      : stmt.type === 'ExportNamedDeclaration'
+        && (stmt as unknown as ExportNamedDeclaration).declaration?.type === 'VariableDeclaration'
+        ? ((stmt as unknown as ExportNamedDeclaration).declaration as unknown as VariableDeclaration)
+        : null
+
+  // First detect whether any ref() cluster exists; only then do the (more
+  // involved) full-scope pre-pass, keeping ordinary macro files on the fast path.
+  const refNames = new Set<string>()
+  for (const stmt of body as Statement[]) {
+    const innerVd = unwrapVd(stmt)
+    if (!innerVd) continue
+    for (const decl of innerVd.declarations) {
+      const d = decl as VariableDeclarator
+      if (!d.init || (d.id as unknown as { type: string }).type !== 'Identifier') continue
+      const init = d.init as Expression
+      if (init.type === 'CallExpression'
+        && (init as unknown as { callee: { type: string; name?: string } }).callee.type === 'Identifier'
+        && (init as unknown as { callee: { name?: string } }).callee.name === 'ref') {
+        refNames.add((d.id as unknown as { name: string }).name)
+      }
+    }
+  }
+
+  // For a ref cluster we must fully populate scope (refs AND the regular consts a
+  // `.define(expr)` references) in source order, so each define resolves before
+  // the main loop compiles. `.define(...)` statements are stripped from the
+  // output since they reference the now-removed import. A ref whose define never
+  // resolves falls through to the normal warn() path in the main loop.
+  const defineRemovals: Array<{ start: number; end: number }> = []
+  if (refNames.size > 0) {
+    for (const stmt of body as Statement[]) {
+      if (stmt.type === 'ExpressionStatement') {
+        const expr = (stmt as unknown as { expression: Expression }).expression
+        if (applyDefineStatement(expr, scope, code)) {
+          defineRemovals.push({ start: stmt.start, end: stmt.end })
+        }
+        continue
+      }
+      const innerVd = unwrapVd(stmt)
+      if (!innerVd) continue
+      for (const decl of innerVd.declarations) {
+        const d = decl as VariableDeclarator
+        if (!d.init || (d.id as unknown as { type: string }).type !== 'Identifier') continue
+        const name = (d.id as unknown as { name: string }).name
+        const init = d.init as Expression
+        if (evaluateRefDeclaration(init, name, scope)) continue
+        if (scope.has(name)) continue
+        if (!referencesAny(init, allNames, scope)) continue
+        // Evaluate into scope so a subsequent `.define()` can reference it. The
+        // main loop re-evaluates and compiles; refs stay shared, so this is safe.
+        const combi = evaluateExpr(init, scope, code, [])
+        if (combi) scope.set(name, { combi, mfSrcs: [] })
+      }
+    }
+  }
+
   for (const stmt of body as Statement[]) {
     // Handle both direct VariableDeclarations and exported ones
     let vd: VariableDeclaration | null = null
@@ -200,6 +267,24 @@ export function transformMacro(
         // ── Simple binding: const name = <expr> ──────────────────────────
         const varName = (d.id as unknown as { name: string }).name
         if (!referencesAny(init, allNames, scope)) continue
+
+        // const name = ref() — resolved by the pre-pass. Compile the (now
+        // defined) ref combinator in place; codegen inlines the whole recursive
+        // cluster behind a named function. The `.define(...)` statements are
+        // removed separately.
+        if (refNames.has(varName)) {
+          const refEntry = scope.get(varName)
+          const refCombi = refEntry?.combi ?? null
+          if (refCombi) {
+            const compiled = compile(refCombi)
+            if (compiled.inlineExpression === null) {
+              warn(init.start, `"${varName}" is a ref() that couldn't be inlined (was .define() called with a static combinator?)`)
+              continue
+            }
+            replacements.push({ start: init.start, end: init.end, replacement: compiled.inlineExpression })
+            continue
+          }
+        }
 
         // const name = rules(factory) → an object literal of compiled rules,
         // so `name.RuleX(...)` resolves to the compiled function at runtime.
@@ -309,6 +394,13 @@ export function transformMacro(
   }
 
   const ms = new MagicString(code)
+
+  // Strip `x.define(...)` statements — only when the import was fully removed.
+  // If anything fell back to the interpreter the import stays, and those
+  // statements are still needed to wire the ref at runtime.
+  if (!anyUnresolved) {
+    for (const { start, end } of defineRemovals) ms.remove(start, end)
+  }
 
   for (const imp of macroImports) {
     if (imp.fullyResolved) {

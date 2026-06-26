@@ -90,9 +90,10 @@ describe('gated choice arms — runtime', () => {
     const r1 = parse(fnBody, 'return;expr;return;')
     expect(r1.ok).toBe(true)
     if (r1.ok) {
-      expect(r1.value[0]![0]).toBe('return')
-      expect(r1.value[1]![0]).toBe('expr')
-      expect(r1.value[2]![0]).toBe('return')
+      const v = r1.value as Array<[string]>
+      expect(v[0]![0]).toBe('return')
+      expect(v[1]![0]).toBe('expr')
+      expect(v[2]![0]).toBe('return')
     }
 
     // outside fn body: 'return' can't be parsed — no context → gate fails → 'return' ≠ 'expr'

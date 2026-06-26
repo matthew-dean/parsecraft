@@ -1,11 +1,11 @@
 /**
  * Jison JSON — upstream grammar: zaach/jison/examples/json.js (ECMA-262)
- * Precompiled: bench/json-jison.js (node bench/compile-jison.mjs)
+ * Precompiled: bench/json-jison.cjs (node bench/compile-jison.mjs)
  */
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const jsonJison = require('./json-jison.js') as {
+const jsonJison = require('./json-jison.cjs') as {
   parser: { parse: (input: string) => unknown }
   Parser: new () => { parse: (input: string) => unknown }
 }

@@ -11,11 +11,11 @@ import type { CSTNode, CSTLeaf, CSTError, CSTTrivia, CSTRawChild, Span } from '.
 
 function mkCst(
   type: string,
-  children: ReadonlyArray<CSTNode | CSTLeaf | CSTError>,
+  children: CSTNode['children'],
   span: Span,
   state: unknown,
 ): CSTNode {
-  return { _tag: 'node', type, span, state, children }
+  return { _tag: 'node', type, span, state, children: [...children] }
 }
 
 const digits = regex(/[0-9]+/)
@@ -274,8 +274,9 @@ describe('node() — custom AST via build callback', () => {
   })
 
   const registry = {
-    Num: (input: string, pos: number, ctx: Parameters<typeof Num.parse>[2]) => Num.parse(input, pos, ctx),
-  }
+    Num: (input: string, pos: number, ctx: Parameters<typeof Num.parse>[2]) =>
+      Num.parse(input, pos, ctx) as import('../../src/index.ts').ParseResult<MyNode>,
+  } satisfies import('../../src/index.ts').Registry<MyNode>
 
   it('returns custom node shape', () => {
     const r = parse(Num, '42')
@@ -381,9 +382,9 @@ describe('node() — rawChildren/triviaLog', () => {
   const identRe = regex(/[a-zA-Z][a-zA-Z0-9-]*/)
   const { Ident, Selectors } = rules(g => {
     const Ident = node('Ident', identRe, (ch, raw, span, tl, state) =>
-      mkRich('Ident', ch as CSTChild[], raw, span, tl, state))
+      mkRich('Ident', ch as CSTChild[], raw as CSTRawChild[], span, tl, state))
     const Selectors = node('Selectors', sequence(g.Ident, g.Ident), (ch, raw, span, tl, state) =>
-      mkRich('Selectors', ch as CSTChild[], raw, span, tl, state))
+      mkRich('Selectors', ch as CSTChild[], raw as CSTRawChild[], span, tl, state))
     return { Ident, Selectors }
   })
 
@@ -393,7 +394,7 @@ describe('node() — rawChildren/triviaLog', () => {
     const r = parser({ trivia: ws, captureTrivia: true }, Selectors).parse('div p')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.value.children.every(c => (c as CSTTrivia)._tag !== 'trivia')).toBe(true)
+    expect(r.value.children.every(c => (c as { _tag: string })._tag !== 'trivia')).toBe(true)
     expect(r.value.triviaLog.length).toBe(3)
     const [start, end] = r.value.triviaLog
     expect('div p'.slice(start, end)).toBe(' ')
@@ -415,7 +416,7 @@ describe('node() — rawChildren/triviaLog', () => {
       const Pair = node(
         'Pair',
         sequence(regex(/[a-zA-Z]+/), literal(':'), regex(/[a-zA-Z]+/)),
-        (ch, raw, span, tl, state) => mkRich('Pair', ch as CSTChild[], raw, span, tl, state),
+        (ch, raw, span, tl, state) => mkRich('Pair', ch as CSTChild[], raw as CSTRawChild[], span, tl, state),
       )
       return { Pair }
     })
