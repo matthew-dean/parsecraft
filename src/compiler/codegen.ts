@@ -1213,6 +1213,24 @@ function emitRecover(def: Extract<ParserDef, { tag: 'recover' }>, ctx: Ctx, pos:
   return { stmts, valueVar: valVar, endVar }
 }
 
+// ── expect: try inner; on failure record a ParseError + recover in place ─────
+function emitExpect(def: Extract<ParserDef, { tag: 'expect' }>, ctx: Ctx, pos: string): ER {
+  const { stmts: innerStmts, okVar, valVar, endVar } = emitFallible(def.parser, ctx, pos)
+  const ind0 = ind(ctx)
+  const errV = v(ctx, '_err')
+  const stmts: string[] = [
+    ...innerStmts,
+    `${ind0}if (!${okVar}) {`,
+    `${ind0}  const ${errV} = { _tag: 'parseError', span: { start: ${pos}, end: ${pos} }, expected: ${JSON.stringify(def.expected)} }`,
+    `${ind0}  if (_ctx._errors) _ctx._errors.push(${errV})`,
+    `${ind0}  ${valVar} = ${errV}`,
+    `${ind0}  ${endVar} = ${pos}`,
+    `${ind0}  ${okVar} = true`,
+    `${ind0}}`,
+  ]
+  return { stmts, valueVar: valVar, endVar }
+}
+
 // ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
@@ -1311,6 +1329,7 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
     case 'node':    return emitNode(def, ctx, pos)
     case 'scanTo':  return emitScanTo(def, ctx, pos)
     case 'recover': return emitRecover(def, ctx, pos)
+    case 'expect':  return emitExpect(def, ctx, pos)
     case 'guard': {
       const fnIdx = ctx.mapFns.length
       ctx.mapFns.push(def.predicate as (v: unknown, span: unknown) => unknown)
@@ -1417,6 +1436,7 @@ function hasNodeDef(p: Combinator<unknown>, seen: Set<Combinator<unknown>> = new
     case 'sepBy':     return hasNodeDef(d.parser, seen) || hasNodeDef(d.separator, seen)
     case 'scanTo':    return hasNodeDef(d.sentinel, seen) || d.skip.some(x => hasNodeDef(x, seen))
     case 'recover':   return hasNodeDef(d.parser, seen) || hasNodeDef(d.sentinel, seen)
+    case 'expect':    return hasNodeDef(d.parser, seen)
     case 'withCtx':   return hasNodeDef(d.parser, seen)
     default:          return false
   }
@@ -1521,6 +1541,11 @@ export function compile<T>(combinator: Combinator<T>, mapFnSources?: string[]): 
     parseWithContext(input: string, parseCtx: ParseContext, pos = 0): ParseResult<T> {
       return fn(input, pos, ctx.runtimeParsers, ctx.mapFns, ctx.buildFns, parseCtx)
     },
+    // Note: collects recover()/expect() errors via _errors. Unlike interpreter
+    // parse({recover:true}) it does NOT populate furthestFail — the compiled path
+    // inlines failures for throughput and deliberately skips _probe bookkeeping.
+    // Callers wanting a furthest-position diagnostic detect unconsumed input
+    // (span.end < input.length) instead, which is mode-agnostic.
     parseWithErrors(input: string, pos = 0): ParseResult<T> & { errors: ParseError[] } {
       const errors: ParseError[] = []
       const result = fn(input, pos, ctx.runtimeParsers, ctx.mapFns, ctx.buildFns, { ...defaultCtx, _errors: errors })

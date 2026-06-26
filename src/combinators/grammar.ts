@@ -1,4 +1,4 @@
-import type { Combinator, ParseContext, ParseResult } from '../types.ts'
+import type { Combinator, ParseContext, ParseResult, ParseFail } from '../types.ts'
 import { buildLineIndex, annotateSpan } from '../compiler/line-index.ts'
 
 export type ParseOptions = {
@@ -105,13 +105,21 @@ export function parse<T>(
 ): ParseResult<T> {
   const trackLines = opts.trackLines ?? false
   const _errors = opts.recover ? [] : undefined
+  // In recovery mode also track the furthest-position failure, so the caller can
+  // report "where it got stuck + what was expected" even when a permissive top
+  // rule succeeds with unconsumed trailing input. Off by default (it adds
+  // bookkeeping to every failed alternative).
+  const _probe = opts.recover ? { offset: input.length, best: null as ParseFail | null } : undefined
   const ctx: ParseContext = {
     trackLines,
     ...(_errors !== undefined ? { _errors } : {}),
+    ...(_probe !== undefined ? { _probe } : {}),
   }
   const result = combinator.parse(input, 0, ctx)
   if (!result.ok) return result
-  const withErrors = _errors !== undefined ? { ...result, errors: _errors } : result
+  const withErrors = _errors !== undefined
+    ? { ...result, errors: _errors, furthestFail: _probe?.best ?? null }
+    : result
   if (trackLines) {
     const idx = buildLineIndex(input)
     return { ...withErrors, span: annotateSpan(withErrors.span, idx) }

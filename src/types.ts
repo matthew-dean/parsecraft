@@ -14,6 +14,13 @@ export type ParseOk<T> = {
   trivia?: Span[]
   /** Populated when parse() is called with { recover: true }. Lists all ParseErrors collected via recover() nodes. */
   errors?: ParseError[]
+  /**
+   * Populated when parse() is called with { recover: true }. The furthest-position
+   * failure seen during the parse (with expected-sets merged across ties) — the
+   * standard "this is where it actually got stuck" diagnostic, meaningful even when
+   * the parse otherwise succeeds with unconsumed trailing input.
+   */
+  furthestFail?: ParseFail | null
 }
 
 export type ParseFail = {
@@ -48,6 +55,7 @@ export type ParserDef =
   | { tag: 'guard';    predicate: (state: unknown) => boolean }
   | { tag: 'withCtx';  extra: unknown; parser: Combinator<unknown> }
   | { tag: 'recover';  parser: Combinator<unknown>; sentinel: Combinator<unknown> }
+  | { tag: 'expect';   parser: Combinator<unknown>; label: string | undefined; expected: string[] }
   | { tag: 'scanTo';   sentinel: Combinator<unknown>; skip: Combinator<unknown>[]; orEOF: boolean }
   | { tag: 'keywords'; words: readonly string[]; caseInsensitive: boolean; boundary: string | undefined }
   | { tag: 'unknown' }
