@@ -1,6 +1,9 @@
 import type { Combinator, ParseContext, ParseResult, ParserMeta } from '../types.ts'
 import { literal } from './literal.ts'
+import { regex } from './regex.ts'
 import { sequence } from './sequence.ts'
+import { choice } from './choice.ts'
+import { many } from './repeat.ts'
 import { transform } from './map.ts'
 import { expect } from './expect.ts'
 import { any } from './first-set.ts'
@@ -117,27 +120,61 @@ export function balanced(
   // combinator; added to the interior scan's skip list, a nested `open` is
   // consumed intact (recursively) before the scan looks for the matching `close`.
   const self = ref<string>()
-  // Once `open` is consumed, the pair is COMMITTED: the interior scans to `close`
-  // OR end-of-input (orEOF), and the close is required via expect(). A truly
-  // unmatched `open` therefore reports "expected <close>" (into ctx._errors) and
-  // recovers, instead of failing silently and letting the caller treat the stray
-  // open as ordinary content. Well-formed input finds `close` before EOF, so this
-  // is behaviourally identical there.
-  const inner = scanTo(literal(close), {
-    ...options,
-    orEOF: true,
-    skip: [self, ...(options.skip ?? [])],
-  })
+  const skips = options.skip ?? []
+  // PREDICTIVE interior — no char-walk. The body is `many(choice(self, …skips,
+  // contentRun))`, where contentRun is a regex of chars that are NOT this pair's
+  // delimiters and NOT the start of any skip (so a string/comment arm still wins
+  // its position). At any other character — a stray close, or a *different* bracket
+  // type — no arm matches, `many` stops, and the required close (expect()) reports
+  // "expected <close>". So an unmatched open, a cross-type close `(a]`, and a stray
+  // close all surface as errors; nothing is silently swallowed. Well-formed input
+  // is consumed identically.
+  const stop = new Set<string>([open, close])
+  let bounded = true
+  for (const sk of skips) {
+    const cs = firstSetClassChars(sk)
+    if (cs === null) { bounded = false; break }
+    for (const ch of cs) stop.add(ch)
+  }
+  const cls = [...stop].map(escapeClassChar).join('')
+  // A run when every skip's start is bounded (fast); else one char at a time so a
+  // skip arm always gets the chance to match at its position.
+  const content = bounded
+    ? regex(new RegExp(`[^${cls}]+`))
+    : regex(new RegExp(`[^${escapeClassChar(open)}${escapeClassChar(close)}]`))
+  const inner = many(choice(self, ...skips, content))
   const combi = transform(
     sequence(literal(open), inner, expect(literal(close), close)),
-    // `c` is the close string, or a ParseError when expect() recovered an unmatched open.
-    ([o, content, c]) => o + content + (typeof c === 'string' ? c : ''),
+    // parts: strings (content/self) or arrays (a sequence-shaped skip) or a
+    // ParseError (recovered close). `c` is the close string or a ParseError.
+    ([o, parts, c]) => o + (parts as unknown[]).map(p => typeof p === 'string' ? p : Array.isArray(p) ? p.join('') : '').join('') + (typeof c === 'string' ? c : ''),
   )
   // Provide the callback source so the macro can inline this library-internal
   // transform (codegen derives map-fn sources from def.fnSrc).
   if (combi._def.tag === 'transform') {
-    combi._def.fnSrc = '([o, content, c]) => o + content + (typeof c === "string" ? c : "")'
+    combi._def.fnSrc = '([o, parts, c]) => o + parts.map(p => typeof p === "string" ? p : Array.isArray(p) ? p.join("") : "").join("") + (typeof c === "string" ? c : "")'
   }
   self.define(combi as Combinator<string>)
   return combi
+}
+
+/**
+ * The characters a combinator can START with, as char-class members — or null if
+ * its first set is unbounded ('any') or too broad to be a delimiter. Used by
+ * balanced() to keep a content run from eating the start of a skip.
+ */
+function firstSetClassChars(c: Combinator<unknown>): string[] | null {
+  const fs = c._meta.firstSet
+  if (fs.kind === 'empty') return []
+  if (fs.kind !== 'ranges') return null
+  const out: string[] = []
+  for (const { lo, hi } of fs.ranges) {
+    if (hi - lo > 8) return null
+    for (let cp = lo; cp <= hi; cp++) out.push(String.fromCodePoint(cp))
+  }
+  return out
+}
+
+function escapeClassChar(ch: string): string {
+  return ch.replace(/[\\\]^-]/g, '\\$&')
 }
