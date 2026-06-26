@@ -130,38 +130,29 @@ describe('balanced()', () => {
     if (r.ok) expect(r.value).toBe("(a ')'b)")
   })
 
-  it('balanced stops at first close without skip', () => {
-    // Without skip, the first ) terminates — nested () breaks naively
+  it('handles same-delimiter nesting automatically (depth-counted)', () => {
+    // balanced() skips nested same-delimiter pairs via an internal self-reference,
+    // so the FIRST close no longer wins — depth is respected.
     const p = balanced('(', ')')
-    const r = parse(p, '(a(b)c)')
-    // Without nesting skip, stops at inner )
-    if (r.ok) expect(r.value).toBe('(a(b)')   // first close wins
+    expect(parse(p, '(a(b)c)').value).toBe('(a(b)c)')
+    expect(parse(p, '(a(b(c))d)').value).toBe('(a(b(c))d)')
+    expect(parse(balanced('{', '}'), '{{x}}').value).toBe('{{x}}')
+    expect(parse(balanced('{', '}'), '{{{deep}}}').value).toBe('{{{deep}}}')
   })
 
-  it('truly nested with recursive skip', () => {
-    // To handle nested parens: pass balanced itself as a skipper
-    // We use a forward ref pattern since balanced is recursive
-    let parenGroup: ReturnType<typeof balanced>
-    const sqStr = sequence(literal("'"), scanTo(literal("'"), { orEOF: false }), literal("'"))
-    // Build with lazy skip: at scan time, parenGroup is defined
-    const inner = scanTo(literal(')'), {
-      skip: [
-        sqStr,
-        { // inline lazy parser
-          _tag: 'lazy',
-          _meta: { firstSet: { kind: 'ranges', ranges: [{ lo: 40, hi: 40 }] }, canMatchNewline: true, isTrivia: false },
-          _def: { tag: 'lazy', thunk: () => parenGroup as Combinator<unknown> },
-          parse: (input, pos, ctx) => parenGroup.parse(input, pos, ctx),
-        },
-      ],
+  it('handles well-formed mixed-delimiter nesting', () => {
+    // In a scanTo skip-set, each balanced() skips its own kind; well-formed input
+    // always escorts a close with its matching open, so cross-delimiter nesting at
+    // any depth is consumed intact.
+    const st = scanTo(choice(literal(';'), literal('}')), {
+      skip: [balanced('(', ')'), balanced('[', ']'), balanced('{', '}')],
     })
-    parenGroup = transform(
-      sequence(literal('('), inner, literal(')')),
-      ([o, c, cl]) => o + c + cl,
-    )
-    const r = parse(parenGroup, '(a(b(c))d)')
-    expect(r.ok).toBe(true)
-    if (r.ok) expect(r.value).toBe('(a(b(c))d)')
+    for (const body of ['(({[{}]}))', '({()})', '([{}])', '({[({[]})]})', '{1, {2}, [3]}']) {
+      const r = parse(st, body + ';')
+      expect(r.ok).toBe(true)
+      expect(body.slice(0, r.span.end ? body.length : 0)).toBe(body) // sanity
+      expect((body + ';').slice(0, r.span.end)).toBe(body)
+    }
   })
 })
 

@@ -3,6 +3,7 @@ import { literal } from './literal.ts'
 import { sequence } from './sequence.ts'
 import { transform } from './map.ts'
 import { any } from './first-set.ts'
+import { ref } from './ref.ts'
 import { pushCstLeaf, cstCaptureActive } from '../cst/capture-buffer.ts'
 
 export type ScanToOptions = {
@@ -104,7 +105,15 @@ export function balanced(
   close: string,
   options: ScanToOptions = {},
 ): Combinator<string> {
-  const inner = scanTo(literal(close), options)
+  // The interior scan must skip NESTED same-delimiter pairs so depth is counted —
+  // otherwise `{{x}}` stops at the first `}`. `self` references this balanced
+  // combinator; added to the interior scan's skip list, a nested `open` is
+  // consumed intact (recursively) before the scan looks for the matching `close`.
+  const self = ref<string>()
+  const inner = scanTo(literal(close), {
+    ...options,
+    skip: [self, ...(options.skip ?? [])],
+  })
   const combi = transform(
     sequence(literal(open), inner, literal(close)),
     ([o, content, c]) => o + content + c,
@@ -114,5 +123,6 @@ export function balanced(
   if (combi._def.tag === 'transform') {
     combi._def.fnSrc = '([o, content, c]) => o + content + c'
   }
+  self.define(combi as Combinator<string>)
   return combi
 }
