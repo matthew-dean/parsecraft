@@ -36,6 +36,8 @@
     "typecheck": "tsc",
     "bench": "node --import tsx/esm bench/run.ts",
     "bench:baseline": "node --import tsx/esm bench/update-parseman-baseline.ts",
+    "perf:guard": "node --import tsx/esm bench/perf-guard.ts",
+    "prepare": "git config core.hooksPath scripts/git-hooks || true",
     "bench:svg": "node --import tsx/esm bench/gen-svg.ts",
     "build:chevrotain-bench": "node --import tsx/esm scripts/build-chevrotain-bench.mjs",
     "bench:compile-grammars": "peggy --format es -o bench/json-parser.js bench/json.pegjs && peggy --format es -o bench/csv-parser.js bench/csv.pegjs && peggy --format es -o bench/graphql-parser.js bench/graphql.pegjs && peggy --format es -o bench/graphqlite-parser.js bench/graphqlite.pegjs && nearleyc bench/vendor/nearley/json.ne -o bench/json-nearley.js && nearleyc bench/vendor/nearley/csv.ne -o bench/csv-nearley.js && nearleyc bench/vendor/nearley/graphql.ne -o bench/graphql-nearley.js && cp bench/graphql-nearley.js bench/graphql-nearley.cjs && node bench/compile-jison.mjs"

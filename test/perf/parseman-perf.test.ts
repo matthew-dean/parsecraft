@@ -58,9 +58,13 @@ describe('Parseman perf — baseline regression guard', () => {
       skipOptional: true,
       measure: { samples: 5 },
     })
+    // Guard on the MACHINE-INDEPENDENT compiled speedup ratio (interp/comp): it
+    // cancels out CPU speed, so it fires only on real codegen regressions and
+    // stays green on any machine. Absolute-µs is hardware-dependent and only
+    // checked when PARSEMAN_PERF_ABSOLUTE is set (same machine as the baseline).
     const regressions = findRegressions(rows, baseline, {
-      modes: ['compiled'],
-      tolerance: { compiled: 25, speedup: 15 },
+      checkSpeedup: true,
+      tolerance: { speedup: 18, compiled: 25 },
     })
     if (regressions.length > 0) {
       console.log('\nParseman perf regressions vs baseline:')

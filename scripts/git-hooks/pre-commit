@@ -1,0 +1,25 @@
+#!/bin/sh
+# Parseman pre-commit perf guard.
+#
+# Blocks a commit when the machine-INDEPENDENT compiled speedup ratio
+# (interpreted/compiled) drops materially below the committed baseline — i.e. a
+# real codegen regression, not a slow machine. Runs the fast css-only path
+# (~1-2s). Set SKIP_PERF_GUARD=1 to bypass (e.g. WIP commits), or re-baseline
+# with `pnpm bench:baseline` after an intentional perf change.
+#
+# Only runs when the codegen / combinators / compiled examples are touched, so
+# unrelated commits aren't slowed down.
+
+[ "$SKIP_PERF_GUARD" = "1" ] && exit 0
+
+# Limit to commits that can actually affect compiled output.
+CHANGED=$(git diff --cached --name-only)
+echo "$CHANGED" | grep -qE '^(src/compiler/|src/combinators/|src/cst/|examples/.*/parser\.ts|bench/parseman-perf\.ts)' || exit 0
+
+echo "[pre-commit] running parseman perf guard (css ratio)…"
+node --import tsx/esm bench/perf-guard.ts
+status=$?
+if [ $status -ne 0 ]; then
+  echo "[pre-commit] perf guard failed — commit blocked. Bypass with SKIP_PERF_GUARD=1 if intentional."
+fi
+exit $status

@@ -96,6 +96,8 @@ export type ParsemanSuiteOpts = {
   measure?: { samples?: number }
   /** Skip optional large fixtures (e.g. bootstrap4.css) — use in CI. */
   skipOptional?: boolean
+  /** Only run cases whose id starts with one of these prefixes (e.g. ['css']). */
+  only?: string[]
 }
 
 function buildCases(): CaseDef[] {
@@ -172,6 +174,7 @@ export function runParsemanSuite(opts?: ParsemanSuiteOpts): ParsemanBenchRow[] {
   const rows: ParsemanBenchRow[] = []
   for (const c of buildCases()) {
     if (opts?.skipOptional && c.optional) continue
+    if (opts?.only && !opts.only.some(p => c.id.startsWith(p))) continue
     const iterations = Math.max(50, Math.floor(c.iterations * scale))
     for (const mode of ['interpreted', 'compiled'] as const) {
       const fn = mode === 'interpreted' ? c.interpreted : c.compiled
@@ -326,21 +329,45 @@ export function printHistoryIndex(caseId = 'css/bootstrap4'): void {
 }
 
 /** Returns regression messages when any case exceeds tolerance vs baseline. */
+/**
+ * Detect perf regressions vs the committed baseline.
+ *
+ * PRIMARY check — **machine-independent compiled speedup ratio**. The ratio
+ * `interpreted/compiled` is measured for both modes in the *same* process, so a
+ * slow or fast CPU scales both numerator and denominator equally and cancels
+ * out. A ratio drop therefore signals a genuine *compiled-codegen* regression,
+ * not a hardware difference. This guard runs on every machine and is the one we
+ * block commits on. (The 2.3× compiled-CSS regression showed up here as a
+ * ratio collapse 3.4× → 1.6× while the old absolute-µs guard fired on every
+ * non-baseline machine and was therefore ignored.)
+ *
+ * SECONDARY check — absolute median µs. Hardware-dependent, so it's OFF by
+ * default and only enabled on the same machine that captured the baseline via
+ * `PARSEMAN_PERF_ABSOLUTE=1` (or `opts.checkAbsolute`). Useful in a pinned CI
+ * runner; useless and noisy anywhere else.
+ */
 export function findRegressions(
   rows: ParsemanBenchRow[],
   baseline: ParsemanBaseline,
   opts?: {
     tolerance?: { compiled?: number; interpreted?: number; speedup?: number }
-    /** Which modes to check absolutely (default both). CI often skips interpreted — env/JIT noise. */
+    /** Which modes to check absolutely (default both). Only used when checkAbsolute is on. */
     modes?: ParsemanMode[]
-    /** Fail when compiled speedup (interp/comp) drops vs baseline speedup. */
+    /** Run the machine-independent speedup-ratio check (default true). */
     checkSpeedup?: boolean
+    /**
+     * Run the machine-DEPENDENT absolute-µs check. Defaults to the
+     * `PARSEMAN_PERF_ABSOLUTE` env var being set — only turn this on when the
+     * current machine captured the baseline.
+     */
+    checkAbsolute?: boolean
   },
 ): string[] {
   const tolCompiled = opts?.tolerance?.compiled ?? 25
   const tolInterpreted = opts?.tolerance?.interpreted ?? 100
   const tolSpeedup = opts?.tolerance?.speedup ?? 15
   const modes = opts?.modes ?? ['interpreted', 'compiled']
+  const checkAbsolute = opts?.checkAbsolute ?? (process.env.PARSEMAN_PERF_ABSOLUTE !== undefined)
   const msgs: string[] = []
 
   const byId = new Map<string, { interp?: ParsemanBenchRow; comp?: ParsemanBenchRow }>()
@@ -351,18 +378,7 @@ export function findRegressions(
     byId.set(r.id, g)
   }
 
-  for (const r of rows) {
-    if (!modes.includes(r.mode)) continue
-    const key = `${r.id}/${r.mode}`
-    const b = baseline.cases[key]
-    if (!b) continue
-    const pct = pctDelta(r.medianUs, b.medianUs)
-    const limit = r.mode === 'compiled' ? tolCompiled : tolInterpreted
-    if (pct > limit) {
-      msgs.push(`${key}: ${r.medianUs.toFixed(2)}µs vs baseline ${b.medianUs.toFixed(2)}µs (${fmtDelta(pct)} regression)`)
-    }
-  }
-
+  // ── PRIMARY: machine-independent compiled speedup ratio ───────────────────
   if (opts?.checkSpeedup !== false) {
     for (const [id, { interp, comp }] of byId) {
       if (!interp || !comp) continue
@@ -373,7 +389,22 @@ export function findRegressions(
       const baseSpeedup = bi / bc
       const dropPct = ((baseSpeedup - speedup) / baseSpeedup) * 100
       if (dropPct > tolSpeedup) {
-        msgs.push(`${id}/speedup: ${speedup.toFixed(2)}× vs baseline ${baseSpeedup.toFixed(2)}× (${dropPct.toFixed(1)}% slower compiled)`)
+        msgs.push(`${id}/speedup: ${speedup.toFixed(2)}× vs baseline ${baseSpeedup.toFixed(2)}× (${dropPct.toFixed(1)}% below baseline ratio — compiled codegen regressed)`)
+      }
+    }
+  }
+
+  // ── SECONDARY: absolute µs — same-machine only, opt-in ────────────────────
+  if (checkAbsolute) {
+    for (const r of rows) {
+      if (!modes.includes(r.mode)) continue
+      const key = `${r.id}/${r.mode}`
+      const b = baseline.cases[key]
+      if (!b) continue
+      const pct = pctDelta(r.medianUs, b.medianUs)
+      const limit = r.mode === 'compiled' ? tolCompiled : tolInterpreted
+      if (pct > limit) {
+        msgs.push(`${key}: ${r.medianUs.toFixed(2)}µs vs baseline ${b.medianUs.toFixed(2)}µs (${fmtDelta(pct)} regression, absolute)`)
       }
     }
   }
