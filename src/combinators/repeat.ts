@@ -114,8 +114,11 @@ export function optional<T>(combinator: Combinator<T>): Combinator<T | null> {
     _meta: meta,
     _def: { tag: 'optional', parser: combinator as Combinator<unknown> },
     parse(input: string, pos: number, ctx: ParseContext): ParseResult<T | null> {
+      const mark = saveTriviaMark(ctx)
       const result = combinator.parse(input, pos, ctx)
       if (result.ok) return result as ParseResult<T>
+      // Inner failed → roll back any CST leaves/trivia it captured before giving up.
+      rollbackTrivia(ctx, mark)
       return { ok: true, value: null, span: { start: pos, end: pos } }
     },
   }
@@ -138,7 +141,10 @@ export function sepBy<T, S>(combinator: Combinator<T>, separator: Combinator<S>)
       const values: T[] = [first.value]
       let cur = first.span.end
       while (cur < input.length) {
-        let mark = saveTriviaMark(ctx)
+        // One mark for the whole iteration (separator + following item): if the
+        // item fails, the trailing separator must be rolled back with it, or its
+        // captured leaves leak past the end of the list.
+        const loopMark = saveTriviaMark(ctx)
         let sepPos = cur
         if (ctx.trivia) {
           if (needsDeferredTriviaCommit(ctx)) {
@@ -151,10 +157,9 @@ export function sepBy<T, S>(combinator: Combinator<T>, separator: Combinator<S>)
         }
         const sep = separator.parse(input, sepPos, ctx)
         if (!sep.ok) {
-          rollbackTrivia(ctx, mark)
+          rollbackTrivia(ctx, loopMark)
           break
         }
-        mark = saveTriviaMark(ctx)
         let nextPos = sep.span.end
         if (ctx.trivia) {
           if (needsDeferredTriviaCommit(ctx)) {
@@ -167,7 +172,7 @@ export function sepBy<T, S>(combinator: Combinator<T>, separator: Combinator<S>)
         }
         const next = combinator.parse(input, nextPos, ctx)
         if (!next.ok) {
-          rollbackTrivia(ctx, mark)
+          rollbackTrivia(ctx, loopMark)
           break
         }
         values.push(next.value)

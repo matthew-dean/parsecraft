@@ -17,7 +17,7 @@ export { node } from './combinators/node.ts'
 export type { BuildNode } from './combinators/node.ts'
 // lazy() is intentionally NOT exported.
 export { transform, skip, trivia, label } from './combinators/map.ts'
-export { parse, parser } from './combinators/grammar.ts'
+export { parse, parser, noTrivia } from './combinators/grammar.ts'
 export type { ParseOptions, ParserOptions, ParsemanParser } from './combinators/grammar.ts'
 
 export { compile } from './compiler/codegen.ts'

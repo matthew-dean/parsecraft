@@ -14,7 +14,14 @@ export type ParseOptions = {
 }
 
 export type ParserOptions = ParseOptions & {
-  trivia?: Combinator<unknown>
+  /**
+   * Trivia parser for this scope. Three states:
+   *   - a Combinator → skip this trivia between sequence/repeat terms
+   *   - `undefined`  → inherit the enclosing scope's trivia (no change)
+   *   - `null`       → CLEAR trivia: no trivia skipped, so terms must be contiguous.
+   *                    Re-enable inside a nested region with another parser({ trivia }).
+   */
+  trivia?: Combinator<unknown> | null
   /** Record consumed trivia as CSTTrivia tokens in rawChildren. Default: skip. */
   captureTrivia?: boolean
 }
@@ -25,13 +32,15 @@ export interface ParsemanParser<T> extends Combinator<T> {
 }
 
 export function parser<T>(opts: ParserOptions, root: Combinator<T>): ParsemanParser<T> {
+  const clearTrivia = opts.trivia === null
   return {
     _tag: 'grammar',
     _meta: root._meta,
     _def: {
       tag: 'grammar',
       parser: root as Combinator<unknown>,
-      triviaParser: opts.trivia,
+      triviaParser: clearTrivia ? undefined : (opts.trivia ?? undefined),
+      clearTrivia,
       trackLines: opts.trackLines ?? false,
     },
     parse(input: string, pos?: number, _ctx?: ParseContext): ParseResult<T> {
@@ -42,7 +51,11 @@ export function parser<T>(opts: ParserOptions, root: Combinator<T>): ParsemanPar
       const ctx: ParseContext = {
         ..._ctx,
         trackLines,
-        ...(opts.trivia !== undefined ? {
+        // trivia: null clears (contiguous terms); a Combinator sets; undefined inherits.
+        ...(clearTrivia ? {
+          trivia: undefined,
+          triviaKindLabels: undefined,
+        } : opts.trivia != null ? {
           trivia: opts.trivia,
           ...(opts.trivia._meta.triviaKindLabels
             ? { triviaKindLabels: opts.trivia._meta.triviaKindLabels }
@@ -58,6 +71,31 @@ export function parser<T>(opts: ParserOptions, root: Combinator<T>): ParsemanPar
       return result
     },
   } as ParsemanParser<T>
+}
+
+/**
+ * Run `root` with the active trivia cleared — no trivia is skipped between its
+ * sequence/repeat terms, so they must be contiguous in the input. (Trivia is
+ * whatever parser({ trivia }) installed — often whitespace/comments, but it is
+ * grammar-defined.) The inverse of parser({ trivia }); re-enable trivia in a
+ * nested region with another parser({ trivia }).
+ *
+ * Wrap the WHOLE contiguous run: an enclosing sequence skips trivia *before* a
+ * term runs, so wrapping just the inner part would let leading trivia through.
+ *
+ * For a static glued token just use one literal/regex; reach for noTrivia when a
+ * glued part is a structured sub-rule — e.g. a head glued to a `[subscript]`
+ * whose interior still allows trivia. Turn trivia back on for a region by nesting
+ * another parser({ trivia }) (innermost wins, reverts on exit); put the WHOLE
+ * spaced region — including its leading `[` — inside it, since sequence skips
+ * trivia only between terms, not before its first:
+ *
+ *   // `arr[i + 1]` — `arr` touches `[`, but the subscript is a spaced expr:
+ *   noTrivia(sequence(name,
+ *     parser({ trivia: ws }, sequence(literal('['), expr, literal(']')))))
+ */
+export function noTrivia<T>(root: Combinator<T>): ParsemanParser<T> {
+  return parser({ trivia: null }, root)
 }
 
 export function parse<T>(

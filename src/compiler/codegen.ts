@@ -345,14 +345,33 @@ function emitFallible(
   ctx.indent    = savedIndent
 
   const ind0 = ind(ctx)
+  // In capturing mode, roll back any CST captures made by a FAILED attempt — a
+  // sub-parser may match terminals (e.g. a sequence that consumes '[') and then
+  // fail on a later term, breaking out with those leaves/trivia still buffered.
+  // Without this they leak into the enclosing node()'s children. (The non-disjoint
+  // choice path does the same per-arm; a disjoint choice commits to one arm and
+  // relies on this boundary to undo a failed commit.)
+  const mL  = ctx.capturing ? v(ctx, '_fcl')  : null
+  const mR  = ctx.capturing ? v(ctx, '_fcr')  : null
+  const mTl = ctx.capturing ? v(ctx, '_fctl') : null
+  const mLg = ctx.capturing ? v(ctx, '_fclg') : null
   const stmts = [
     `${ind0}let ${okV} = false, ${valV}, ${endV} = ${pos}`,
+    ...(mL ? [
+      `${ind0}const ${mL} = _ctx._cstLeaves?.length ?? 0`,
+      `${ind0}const ${mR} = _ctx._cstRawChildren?.length ?? 0`,
+      `${ind0}const ${mTl} = _ctx._cstTriviaLog?.length ?? 0`,
+      `${ind0}const ${mLg} = _ctx._triviaLog?.length ?? 0`,
+    ] : []),
     `${ind0}${lbl}: {`,
     ...r.stmts,
     `${ind0}  ${valV} = ${r.valueVar}`,
     `${ind0}  ${endV} = ${r.endVar}`,
     `${ind0}  ${okV} = true`,
     `${ind0}}`,
+    ...(mL ? [
+      `${ind0}if (!${okV}) { if (_ctx._cstLeaves) _ctx._cstLeaves.length = ${mL}; if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${mR}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${mTl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${mLg} }`,
+    ] : []),
   ]
   return { stmts, okVar: okV, valVar: valV, endVar: endV }
 }
@@ -902,34 +921,31 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
       const markV = v(ctx, '_mk')
       const markTl = v(ctx, '_mktl')
       const markLog = v(ctx, '_mklg')
+      const markLv = v(ctx, '_mklv')
       const spV = v(ctx, '_sp')
+      // Marks taken BEFORE the separator. If either the separator OR the following
+      // item fails, the whole iteration unwinds to here — crucially undoing the
+      // separator's own captured leaves (markLv) when the item after it fails.
       stmts.push(
         `${ind(ctx)}const ${markV} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
         `${ind(ctx)}const ${markTl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
         `${ind(ctx)}const ${markLog} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
+        `${ind(ctx)}const ${markLv} = _ctx._cstLeaves ? _ctx._cstLeaves.length : 0`,
         `${ind(ctx)}const ${spV} = ${capFn}(input, ${curV}, _ctx, 1)`,
       )
       sepAtPos = spV
-      const sepRollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${markLog}; `
+      const rollbackToSep = `if (_ctx._cstLeaves) _ctx._cstLeaves.length = ${markLv}; if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markV}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${markTl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${markLog}; `
       const { stmts: sepStmts, okVar: sepOk, endVar: sepEnd } = emitFallible(def.separator, ctx, sepAtPos)
-      stmts.push(...sepStmts, `${ind(ctx)}if (!${sepOk}) { ${sepRollback}break }`)
+      stmts.push(...sepStmts, `${ind(ctx)}if (!${sepOk}) { ${rollbackToSep}break }`)
 
-      const mark2V = v(ctx, '_mk2')
-      const mark2Tl = v(ctx, '_mktl2')
-      const mark2Log = v(ctx, '_mklg2')
       const npV = v(ctx, '_np')
-      stmts.push(
-        `${ind(ctx)}const ${mark2V} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
-        `${ind(ctx)}const ${mark2Tl} = _ctx._cstTriviaLog ? _ctx._cstTriviaLog.length : 0`,
-        `${ind(ctx)}const ${mark2Log} = _ctx._triviaLog ? _ctx._triviaLog.length : 0`,
-        `${ind(ctx)}const ${npV} = ${capFn}(input, ${sepEnd}, _ctx, 1)`,
-      )
-      const nextRollback = `if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${mark2V}; if (_ctx._cstTriviaLog) _ctx._cstTriviaLog.length = ${mark2Tl}; if (_ctx._triviaLog) _ctx._triviaLog.length = ${mark2Log}; `
+      stmts.push(`${ind(ctx)}const ${npV} = ${capFn}(input, ${sepEnd}, _ctx, 1)`)
       const { stmts: nextStmts, okVar: nextOk, valVar: nextVal, endVar: nextEnd } =
         emitFallible(def.parser, ctx, npV)
       stmts.push(
         ...nextStmts,
-        `${ind(ctx)}if (!${nextOk}) { ${nextRollback}break }`,
+        // item failed → unwind the separator too, back to the end of the last item
+        `${ind(ctx)}if (!${nextOk}) { ${rollbackToSep}break }`,
         `${ind(ctx)}${arrV}.push(${nextVal})`,
         `${ind(ctx)}${curV} = ${nextEnd}`,
       )
@@ -953,13 +969,26 @@ function emitSepBy(_p: Combinator<unknown>, def: Extract<ParserDef, { tag: 'sepB
       )
     }
   } else {
+    // No trivia. Still mark the leaf buffers before the separator so that an item
+    // failing after the separator unwinds the separator's captured leaves too.
+    const markLv = ctx.capturing ? v(ctx, '_mklv') : null
+    const markRw = ctx.capturing ? v(ctx, '_mkrw') : null
+    if (markLv) {
+      stmts.push(
+        `${ind(ctx)}const ${markLv} = _ctx._cstLeaves ? _ctx._cstLeaves.length : 0`,
+        `${ind(ctx)}const ${markRw} = _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0`,
+      )
+    }
     const { stmts: sepStmts, okVar: sepOk, endVar: sepEnd } = emitFallible(def.separator, ctx, sepAtPos)
     stmts.push(...sepStmts, `${ind(ctx)}if (!${sepOk}) break`)
+    const nextRb = markLv
+      ? `if (_ctx._cstLeaves) _ctx._cstLeaves.length = ${markLv}; if (_ctx._cstRawChildren) _ctx._cstRawChildren.length = ${markRw}; `
+      : ''
     const { stmts: nextStmts, okVar: nextOk, valVar: nextVal, endVar: nextEnd } =
       emitFallible(def.parser, ctx, sepEnd)
     stmts.push(
       ...nextStmts,
-      `${ind(ctx)}if (!${nextOk}) break`,
+      `${ind(ctx)}if (!${nextOk}) { ${nextRb}break }`,
       `${ind(ctx)}${arrV}.push(${nextVal})`,
       `${ind(ctx)}${curV} = ${nextEnd}`,
     )
@@ -1263,7 +1292,11 @@ function emit(p: Combinator<unknown>, ctx: Ctx, pos: string): ER {
     case 'grammar': {
       const savedTrivia = ctx.activeTrivia
       const savedKindLabels = ctx.triviaKindLabels
-      if (def.triviaParser) {
+      if (def.clearTrivia) {
+        // noTrivia / parser({ trivia: null }): contiguous terms, no trivia skipped.
+        ctx.activeTrivia = undefined
+        ctx.triviaKindLabels = undefined
+      } else if (def.triviaParser) {
         ctx.activeTrivia = def.triviaParser
         if (def.triviaParser._meta.triviaKindLabels) {
           ctx.triviaKindLabels = def.triviaParser._meta.triviaKindLabels

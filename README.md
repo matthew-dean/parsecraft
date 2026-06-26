@@ -112,7 +112,7 @@ If `with { type: 'macro' }` is stripped (older bundlers, test runners), the attr
 
 ### What gets compiled
 
-Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip`, `not`, `scanTo`, `balanced` — plus `rules()` factories (including mutually recursive ones), `parser({ trivia })` wrappers, and `node()` rules (CST capture and all). A full grammar built as a `rules()` factory of `node()` rules compiles end to end: each rule becomes an independently-callable function, terminal/trivia capture is emitted inline, and every `build`/`transform` callback is inlined with its source span. Grammars with no `node()` emit zero capture code, so they compile byte-identically. Parsers that close over external variables the evaluator can't resolve stay as-is — the plugin compiles what it can and quietly leaves the rest alone.
+Combinator trees — `literal`, `regex`, `sequence`, `choice`, `many`, `oneOrMore`, `optional`, `sepBy`, `transform`, `skip`, `not`, `scanTo`, `balanced` — plus `rules()` factories (including mutually recursive ones), `parser({ trivia })` / `noTrivia()` wrappers, and `node()` rules (CST capture and all). A full grammar built as a `rules()` factory of `node()` rules compiles end to end: each rule becomes an independently-callable function, terminal/trivia capture is emitted inline, and every `build`/`transform` callback is inlined with its source span. Grammars with no `node()` emit zero capture code, so they compile byte-identically. Parsers that close over external variables the evaluator can't resolve stay as-is — the plugin compiles what it can and quietly leaves the rest alone.
 
 ---
 
@@ -155,8 +155,9 @@ A combinator reads from the input at the current position and succeeds or fails 
 | `trivia(combinator)` | Label a combinator as skippable filler (whitespace, comments). Does not skip by itself — pass the result to `parser({ trivia })` to turn on auto-skipping between tokens. |
 | `makeWord(boundary?)` | Returns `(str) => Combinator` with a fixed word-boundary class. Not a combinator — see [keyword disambiguation](#ordered-choice-and-keyword-disambiguation). |
 | `rules(factory)` | Named, mutually-recursive rule bundle. See [Named and recursive rules](#named-and-recursive-rules). |
-| `parser({ trivia }, combinator)` | Wrap a root combinator with document-level trivia skipping. See [Whitespace and comment skipping](#whitespace-and-comment-skipping). |
-| `triviaEntries(log, labels?, opts?)` | View over a flat trivia log: `.kind(i)`, `.text(i, input)`, `.start(i)`, `.end(i)`. Stride is 2/3 for root `_triviaLog`, 3/4 for per-node `triviaLog` when kinds are enabled. |
+| `parser({ trivia }, combinator)` | Wrap a root combinator with document-level trivia skipping. `trivia: null` clears trivia for that scope (see `noTrivia`). See [Whitespace and comment skipping](#whitespace-and-comment-skipping). |
+| `noTrivia(combinator)` | Run `combinator` with the active trivia cleared — no trivia is skipped between its `sequence`/`many` terms, so they must be **contiguous** in the input. (Trivia is whatever `parser({ trivia })` installed — often whitespace/comments, but it's grammar-defined.) The inverse of `parser({ trivia })`; re-enable trivia in a nested region with `parser({ trivia }, …)`. For a *static* glued token just use one `literal`/`regex` — reach for `noTrivia` when a glued part is itself a structured sub-rule (e.g. a head that must touch a `[subscript]` or `(args)`). See [Contiguous tokens](#contiguous-tokens-no-trivia-between-them). |
+| `triviaEntries(log, labels?, opts?)` | Indexed view over a trivia log — `.start(i)`, `.end(i)`, `.kind(i)`, `.text(i, input)`. The log is a **flat number array** (no per-entry objects); each entry is a fixed-size run of consecutive numbers, so entry `i` starts at `i * stride`. Root `_triviaLog`: `[start, end]` (stride 2). Per-node `triviaLog` (pass `{ nodeLog: true }`): `[start, end, insertIdx]` (stride 3). Passing `labels` appends a kind index per entry (+1 to stride). |
 
 ---
 
@@ -229,6 +230,27 @@ entries.text(0, input)  // slice on demand
 `label(name, parser)` names a trivia arm; `node('Ruleset', …)` names a CST node — different namespaces, no conflict.
 
 When all trivia arms are labeled, each captured chunk appends a **kind index** to the log (stride +1). Root `_triviaLog` entries are `[start, end, kind]`; per-node `triviaLog` entries are `[start, end, insertIdx, kind]`. Without labels, strides are 2 and 3 respectively.
+
+### Contiguous tokens (no trivia between them)
+
+Trivia skipping is ambient: once `parser({ trivia })` installs it, `sequence`/`many`/`choice` skip filler between **every** term. (Filler is whatever you passed as `trivia` — usually whitespace/comments, but it's grammar-defined.) Sometimes you need the opposite — parts that must touch.
+
+If the whole thing is *static*, don't reach for `noTrivia` — just write one `literal`/`regex`: a decimal is `regex(/[0-9]+\.[0-9]+/)`, an operator is `literal('>=')`. `noTrivia` earns its keep only when a glued part is itself a **structured sub-rule** you can't fold into one pattern — usually recursive, or with its own trivia-enabled interior. The classic case is a head that must touch a bracket, wrapping a sub-expression that *does* allow spaces:
+
+```ts
+const ws = trivia(regex(/[ \t\n]+/))
+
+// `arr[i + 1]` — `arr` is glued to `[` (no `arr [i]`), but the bracketed
+// subscript is a full, space-tolerant expression. A regex can't express that:
+// `expr` is recursive. Turn trivia back on for a region by nesting another
+// parser({ trivia }) — the innermost one wins, and reverts on exit.
+const indexed = noTrivia(sequence(
+  name,
+  parser({ trivia: ws }, sequence(literal('['), expr, literal(']'))),
+))
+```
+
+Put the **whole** trivia-tolerant region inside the nested `parser({ trivia })` — including its leading `[`. `sequence` skips trivia only *between* terms, never before its first, so a `[` left *outside* the nested parser would glue fine but then reject a space right after it (`arr[ i ]`). Two rules of thumb: wrap the whole contiguous run in `noTrivia` (an enclosing `sequence` skips trivia *before* a term, so wrapping just the inner part leaks leading trivia), and wrap the whole spaced region in the nested `parser({ trivia })`. `noTrivia(child)` is exactly `parser({ trivia: null }, child)`.
 
 ---
 

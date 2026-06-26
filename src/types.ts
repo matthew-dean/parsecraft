@@ -41,7 +41,7 @@ export type ParserDef =
   | { tag: 'skip';      main: Combinator<unknown>; skipped: Combinator<unknown> }
   | { tag: 'trivia';    parser: Combinator<unknown> }
   | { tag: 'label';     label: string; parser: Combinator<unknown> }
-  | { tag: 'grammar';   parser: Combinator<unknown>; triviaParser: Combinator<unknown> | undefined; trackLines: boolean }
+  | { tag: 'grammar';   parser: Combinator<unknown>; triviaParser: Combinator<unknown> | undefined; clearTrivia?: boolean; trackLines: boolean }
   | { tag: 'lazy';     thunk: () => Combinator<unknown> }
   | { tag: 'not';      parser: Combinator<unknown> }
   | { tag: 'node';     type: string; parser: Combinator<unknown>; build: (children: ReadonlyArray<unknown>, rawChildren: ReadonlyArray<unknown>, span: { start: number; end: number }, triviaLog: readonly number[], state: unknown) => unknown; buildSrc?: string }
@@ -62,12 +62,14 @@ export type Combinator<T> = {
 import type { CstCaptureBuf } from './cst/capture-buffer.ts'
 
 export type ParseContext = {
-  trivia?: Combinator<unknown>
+  // `| undefined` (matching captureTrivia/_cst* below): a nested scope may
+  // intentionally CLEAR inherited trivia by setting these to undefined (noTrivia).
+  trivia?: Combinator<unknown> | undefined
   /**
    * Label table for the active trivia parser (`label(name, arm)` strings in
    * choice order). When set, trivia logs include a kind index per entry.
    */
-  triviaKindLabels?: readonly string[]
+  triviaKindLabels?: readonly string[] | undefined
   /**
    * When true (and a CST node is collecting children), trivia consumed between
    * terms is recorded into _cstRawChildren as separate CSTTrivia tokens — one
