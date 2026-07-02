@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { regex, choice, oneOrMore, trivia, label, parser, sequence, literal, triviaEntries } from '../../src/index.ts'
 import { compile } from '../../src/compiler/codegen.ts'
 import { analyzeLabeledTrivia } from '../../src/cst/trivia-kinds.ts'
-import { analyzeTriviaFastPath, labeledTriviaKindIndices } from '../../src/compiler/trivia-fast-path.ts'
+import { analyzeLabeledScannableRun, analyzeTriviaFastPath } from '../../src/compiler/trivia-fast-path.ts'
 
 describe('label()', () => {
   it('is transparent at parse time', () => {
@@ -28,16 +28,32 @@ describe('label()', () => {
     expect(analyzeLabeledTrivia(rw)?.labels).toEqual(['whitespace', 'lineComment'])
   })
 
-  it('fast path still applies to labeled CSS rw', () => {
+  it('fast path (with per-arm kinds) applies to labeled CSS rw', () => {
     const rw = trivia(oneOrMore(choice(
       label('whitespace', regex(/[ \t\n\r\f]+/)),
       label('blockComment', regex(/\/\*(?:[^*]|\*(?!\/))*\*\//)),
     )))
     expect(analyzeTriviaFastPath(rw)?.map(s => s.kind)).toEqual(['chars', 'delimited'])
-    expect(labeledTriviaKindIndices(rw)).toEqual({ ws: 0, comment: 1 })
+    // Every arm is scannable → the char-scan loop carries per-arm kind indices.
+    const labeled = analyzeLabeledScannableRun(rw)
+    expect(labeled?.map(a => [a.shape.kind, a.kindIndex])).toEqual([['chars', 0], ['delimited', 1]])
   })
 
-  it('compiles labeled trivia with per-chunk kind capture', () => {
+  it('compiles labeled scannable trivia with per-chunk kind capture (char-scan, no regex)', () => {
+    const rw = trivia(oneOrMore(choice(
+      label('whitespace', regex(/[ \t]+/)),
+      label('blockComment', regex(/\/\*(?:[^*]|\*(?!\/))*\*\//)),
+    )))
+    const p = parser({ trivia: rw }, sequence(literal('a'), literal('b')))
+    const src = compile(p).source
+    // labeled scannable loop captures [start, end, kind] per chunk, via char-scan
+    expect(src).toContain('_ctx._triviaLog.push(_cs, _e, 0)')
+    expect(src).toContain('_ctx._triviaLog.push(_cs, _e, 1)')
+    expect(src).not.toMatch(/function _tf0[\s\S]*\.exec\(input\)/) // no regex dispatch
+  })
+
+  it('falls back to the regex kind loop for a labeled non-scannable arm', () => {
+    // `\/\/.*` is not a recognized scannable shape → labeled-regex loop.
     const rw = trivia(oneOrMore(choice(
       label('whitespace', regex(/[ \t]+/)),
       label('lineComment', regex(/\/\/.*/)),

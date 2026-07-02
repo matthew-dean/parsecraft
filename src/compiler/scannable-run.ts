@@ -124,32 +124,77 @@ const litCond = (base: string, cps: number[], firstVar?: string): string =>
     )
     .join(' && ')
 
+/** `_e` after consuming one token of `shape`, given its opening char is at `c`/`_e`. */
+function advanceExpr(shape: ScanShape): { setup: string[]; endVar: string } {
+  if (shape.kind === 'chars') {
+    // Consume the whole run so a labeled chunk spans the full run (the unlabeled
+    // path consumes one char per outer iteration; either is correct for skipping).
+    return {
+      setup: [
+        `      _e++`,
+        `      while (_e < input.length) { const c2 = input.charCodeAt(_e); if (${classCond('c2', shape.ranges)}) _e++; else break }`,
+      ],
+      endVar: '_e',
+    }
+  }
+  if (shape.kind === 'until') {
+    return {
+      setup: [
+        `      let j = _e + ${shape.open.length}`,
+        `      while (j < input.length && !(${classCond('input.charCodeAt(j)', shape.stop)})) j++`,
+      ],
+      endVar: 'j',
+    }
+  }
+  const n = shape.close.length
+  return {
+    setup: [
+      `      let j = _e + ${shape.open.length}`,
+      `      while (j + ${n - 1} < input.length && !(${litCond('j', shape.close)})) j++`,
+    ],
+    endVar: n === 1 ? '(j + 1 <= input.length ? j + 1 : input.length)' : `(j + ${n} <= input.length ? j + ${n} : input.length)`,
+  }
+}
+
+/** The `if (<opens here>) {` guard line for a shape, dispatched on `c`/`_e`. */
+function guardLine(shape: ScanShape): string {
+  const cond = shape.kind === 'chars' ? classCond('c', shape.ranges) : litCond('_e', shape.open, 'c')
+  return `    if (${cond}) {`
+}
+
 /**
  * One loop branch for a shape, dispatched on the current char `c` (= charCodeAt(_e)).
  * Each branch advances `_e` past the matched token and `continue`s the scan loop.
  */
 export function scanBranch(shape: ScanShape): string {
   if (shape.kind === 'chars') {
+    // Unlabeled: consume one char and re-enter the loop (whole-run span logged once
+    // by the caller's CAP_RECORD). Cheaper than the labeled full-run consume.
     return `    if (${classCond('c', shape.ranges)}) { _e++; continue }`
   }
-  if (shape.kind === 'until') {
-    const stopCond = classCond('input.charCodeAt(j)', shape.stop)
-    return [
-      `    if (${litCond('_e', shape.open, 'c')}) {`,
-      `      let j = _e + ${shape.open.length}`,
-      `      while (j < input.length && !(${stopCond})) j++`,
-      `      _e = j`,
-      `      continue`,
-      `    }`,
-    ].join('\n')
-  }
-  const n = shape.close.length
+  const { setup, endVar } = advanceExpr(shape)
+  return [guardLine(shape), ...setup, `      _e = ${endVar}`, `      continue`, `    }`].join('\n')
+}
+
+/** Push a [start, end, kind] trivia chunk when capturing (`_cap`). */
+function captureChunk(startVar: string, kindIndex: number): string[] {
   return [
-    `    if (${litCond('_e', shape.open, 'c')}) {`,
-    `      let j = _e + ${shape.open.length}`,
-    `      while (j + ${n - 1} < input.length && !(${litCond('j', shape.close)})) j++`,
-    `      _e = ${n === 1 ? 'j + 1 <= input.length ? j + 1 : input.length' : `j + ${n} <= input.length ? j + ${n} : input.length`}`,
-    `      continue`,
-    `    }`,
-  ].join('\n')
+    `      if (_cap) {`,
+    `        if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(${startVar}, _e, ${kindIndex})`,
+    `        if (_ctx._cstTriviaLog !== undefined) _ctx._cstTriviaLog.push(${startVar}, _e, _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0, ${kindIndex})`,
+    `      }`,
+  ]
+}
+
+/**
+ * A labeled branch: consume the shape's full token and log one [start, end,
+ * kindIndex] trivia chunk. Unlike scanBranch this always consumes the whole run
+ * (a chunk must span the entire token) and captures inline per-chunk.
+ */
+export function scanBranchLabeled(shape: ScanShape, kindIndex: number): string {
+  const { setup, endVar } = advanceExpr(shape)
+  const lines = [guardLine(shape), `      const _cs = _e`, ...setup]
+  if (endVar !== '_e') lines.push(`      _e = ${endVar}`)
+  lines.push(...captureChunk('_cs', kindIndex), `      continue`, `    }`)
+  return lines.join('\n')
 }

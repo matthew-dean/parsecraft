@@ -2,7 +2,7 @@ import type { Combinator } from '../types.ts'
 import { getCoreRegexDef } from '../combinators/choice.ts'
 import type { LabeledTriviaSpec } from '../cst/trivia-kinds.ts'
 import { analyzeLabeledTrivia } from '../cst/trivia-kinds.ts'
-import { type ScanShape, parseScanShape, scanBranch } from './scannable-run.ts'
+import { type ScanShape, parseScanShape, scanBranch, scanBranchLabeled } from './scannable-run.ts'
 
 function unwrapTrivia(p: Combinator<unknown>): Combinator<unknown> {
   let cur = p
@@ -64,15 +64,6 @@ export function analyzeTriviaFastPath(trivia: Combinator<unknown>): ScanShape[] 
   return shapes
 }
 
-/** True for the ws-run + block-delimited 2-shape set the labeled path can kind-tag. */
-export function isWsBlockShapeSet(shapes: ScanShape[]): boolean {
-  return (
-    shapes.length === 2 &&
-    shapes.some(s => s.kind === 'chars') &&
-    shapes.some(s => s.kind === 'delimited')
-  )
-}
-
 const CAP_RECORD = [
   `  if (_cap && _e > _pos) {`,
   `    if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(_pos, _e)`,
@@ -91,75 +82,56 @@ function composeFastLoop(shapes: ScanShape[]): string {
   ].join('\n')
 }
 
-const CAP_CHUNK = (wsKind: number, commentKind: number) => [
-  `    if (c === 32 || c === 9 || c === 10 || c === 13 || c === 12) {`,
-  `      const _cs = _e`,
-  `      _e++`,
-  `      while (_e < input.length) {`,
-  `        const c2 = input.charCodeAt(_e)`,
-  `        if (c2 === 32 || c2 === 9 || c2 === 10 || c2 === 13 || c2 === 12) _e++`,
-  `        else break`,
-  `      }`,
-  `      if (_cap) {`,
-  `        if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(_cs, _e, ${wsKind})`,
-  `        if (_ctx._cstTriviaLog !== undefined) _ctx._cstTriviaLog.push(_cs, _e, _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0, ${wsKind})`,
-  `      }`,
-  `      continue`,
-  `    }`,
-  `    if (c === 47 && input.charCodeAt(_e + 1) === 42) {`,
-  `      const _cs = _e`,
-  `      let j = _e + 2`,
-  `      while (j + 1 < input.length && !(input.charCodeAt(j) === 42 && input.charCodeAt(j + 1) === 47)) j++`,
-  `      _e = j + 2 <= input.length ? j + 2 : input.length`,
-  `      if (_cap) {`,
-  `        if (_ctx._triviaLog !== undefined) _ctx._triviaLog.push(_cs, _e, ${commentKind})`,
-  `        if (_ctx._cstTriviaLog !== undefined) _ctx._cstTriviaLog.push(_cs, _e, _ctx._cstRawChildren ? _ctx._cstRawChildren.length : 0, ${commentKind})`,
-  `      }`,
-  `      continue`,
-  `    }`,
-].join('\n')
-
-const WS_COMMENTS_LOOP_LABELED = (wsKind: number, commentKind: number) => [
-  `  while (_e < input.length) {`,
-  `    const c = input.charCodeAt(_e)`,
-  CAP_CHUNK(wsKind, commentKind),
-  `    break`,
-  `  }`,
-].join('\n')
-
-/** Emit a specialized `_tfN` that skips trivia without regex / combinator dispatch. */
-export function buildFastTriviaFnDecl(
-  fnName: string,
-  shapes: ScanShape[],
-  kindIndices?: { ws: number; comment: number },
-): string {
-  // Labeled path: only the ws-run + block-comment shape emits per-chunk kind
-  // indices today (the labeled kind analysis is 2-arm; the caller passes
-  // kindIndices only for that shape — see ensureTriviaFn). Every other shape set
-  // uses the non-labeled composed loop + whole-run CAP_RECORD.
-  const useLabeled = !!kindIndices && isWsBlockShapeSet(shapes)
-  const loop = useLabeled
-    ? WS_COMMENTS_LOOP_LABELED(kindIndices!.ws, kindIndices!.comment)
-    : composeFastLoop(shapes)
-  const cap = useLabeled ? '' : CAP_RECORD
-  const lines = [
+/** Emit a specialized `_tfN` that skips (unlabeled) trivia via a char-scan loop. */
+export function buildFastTriviaFnDecl(fnName: string, shapes: ScanShape[]): string {
+  return [
     `function ${fnName}(input, _pos, _ctx, _cap) {`,
     `  let _e = _pos`,
-    loop,
-  ]
-  if (cap) lines.push(cap)
-  lines.push(`  return _e`, `}`)
-  return lines.join('\n')
+    composeFastLoop(shapes),
+    CAP_RECORD,
+    `  return _e`,
+    `}`,
+  ].join('\n')
 }
 
-function regexArmIndex(spec: LabeledTriviaSpec, isComment: boolean): number | null {
+/**
+ * A LABELED trivia parser whose every arm is scannable → per-arm shape + kind
+ * index, or null. Same recognition as analyzeTriviaFastPath, but keyed by the
+ * labeled arm kinds so the fast loop can log each chunk's kind. Generalizes what
+ * used to be a hardcoded ws-run + block-comment special case to any scannable
+ * shape set / arm count.
+ */
+export function analyzeLabeledScannableRun(
+  trivia: Combinator<unknown>,
+): Array<{ shape: ScanShape; kindIndex: number }> | null {
+  const spec = analyzeLabeledTrivia(trivia)
+  if (!spec) return null
+  const out: Array<{ shape: ScanShape; kindIndex: number }> = []
   for (const arm of spec.arms) {
     const src = getCoreRegexDef(arm.parser)?.source
-    if (!src) return null
-    const comment = src.includes('\\*') || src.startsWith('\\/\\/')
-    if (comment === isComment) return arm.kindIndex
+    const shape = src ? parseScanShape(src) : null
+    if (!shape) return null
+    out.push({ shape, kindIndex: arm.kindIndex })
   }
-  return null
+  return out
+}
+
+/** Emit a labeled scannable trivia `_tfN`: char-scan loop with per-chunk kind capture. */
+export function buildLabeledScannableTriviaFnDecl(
+  fnName: string,
+  arms: ReadonlyArray<{ shape: ScanShape; kindIndex: number }>,
+): string {
+  return [
+    `function ${fnName}(input, _pos, _ctx, _cap) {`,
+    `  let _e = _pos`,
+    `  while (_e < input.length) {`,
+    `    const c = input.charCodeAt(_e)`,
+    ...arms.map(a => scanBranchLabeled(a.shape, a.kindIndex)),
+    `    break`,
+    `  }`,
+    `  return _e`,
+    `}`,
+  ].join('\n')
 }
 
 /** Labeled trivia with regex arms — per-chunk kind capture in compiled output. */
@@ -198,15 +170,6 @@ export function buildLabeledRegexTriviaFnDecl(
     `  return _e`,
     `}`,
   ].join('\n')
-}
-
-export function labeledTriviaKindIndices(trivia: Combinator<unknown>): { ws: number; comment: number } | null {
-  const spec = analyzeLabeledTrivia(trivia)
-  if (!spec || spec.arms.length !== 2) return null
-  const ws = regexArmIndex(spec, false)
-  const comment = regexArmIndex(spec, true)
-  if (ws === null || comment === null) return null
-  return { ws, comment }
 }
 
 export function labeledTriviaRegexArms(trivia: Combinator<unknown>): LabeledTriviaSpec | null {

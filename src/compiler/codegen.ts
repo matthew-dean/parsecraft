@@ -10,12 +10,12 @@ import type { Combinator, ParserDef, FirstSet, ParseResult, ParseContext, ParseE
 import { getCoreLiteralValue, getCoreRegexDef } from '../combinators/choice.ts'
 import { analyzeLabeledTrivia } from '../cst/trivia-kinds.ts'
 import {
+  analyzeLabeledScannableRun,
   analyzeTriviaFastPath,
   buildFastTriviaFnDecl,
   buildLabeledRegexTriviaFnDecl,
   buildLabeledRuntimeTriviaFnDecl,
-  isWsBlockShapeSet,
-  labeledTriviaKindIndices,
+  buildLabeledScannableTriviaFnDecl,
   labeledTriviaRegexArms,
 } from './trivia-fast-path.ts'
 import { analyzeMkInlineBuild, emitInlineMkNodeExpr } from './inline-build.ts'
@@ -234,21 +234,27 @@ function ensureTriviaFn(ctx: Ctx): string {
   ctx.triviaFnNames.set(trivia, fnName)
   ctx.triviaCaptureNames.set(trivia, fnName)
 
-  const fastShapes = analyzeTriviaFastPath(trivia)
-  const kindIndices = labeledTriviaKindIndices(trivia)
   const labeledSpec = analyzeLabeledTrivia(trivia)
-  // Fast char-scan path. For UNLABELED trivia, any recognized shape set qualifies
-  // (whole-run [start,end] capture, no per-arm kinds needed). For LABELED trivia
-  // the fast path can only emit per-chunk kinds for the ws-run + block-comment
-  // shape; every other labeled shape stays on the labeled-regex path below so its
-  // kind tags survive.
-  const fastCoversLabeled = !!kindIndices && !!fastShapes && isWsBlockShapeSet(fastShapes)
-  if (fastShapes && (!labeledSpec || fastCoversLabeled)) {
-    ctx.namedFnDecls.push(buildFastTriviaFnDecl(fnName, fastShapes, fastCoversLabeled ? kindIndices : undefined))
-    return fnName
-  }
 
-  if (labeledSpec) {
+  // UNLABELED trivia: any scannable shape set → char-scan loop with a single
+  // whole-run [start,end] capture (no per-arm kinds needed).
+  if (!labeledSpec) {
+    const fastShapes = analyzeTriviaFastPath(trivia)
+    if (fastShapes) {
+      ctx.namedFnDecls.push(buildFastTriviaFnDecl(fnName, fastShapes))
+      return fnName
+    }
+  } else {
+    // LABELED trivia: if every arm is scannable, the same char-scan loop but with
+    // per-chunk kind capture (generalizes the old hardcoded ws-run + block-comment
+    // case to any shape set / arm count). Otherwise fall to the regex/runtime
+    // kind-tracking loops, which handle non-scannable arms.
+    const labeledShapes = analyzeLabeledScannableRun(trivia)
+    if (labeledShapes) {
+      ctx.namedFnDecls.push(buildLabeledScannableTriviaFnDecl(fnName, labeledShapes))
+      return fnName
+    }
+
     const regexSpec = labeledTriviaRegexArms(trivia)
     if (regexSpec) {
       const reNames: string[] = []
