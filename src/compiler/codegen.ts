@@ -14,6 +14,7 @@ import {
   buildFastTriviaFnDecl,
   buildLabeledRegexTriviaFnDecl,
   buildLabeledRuntimeTriviaFnDecl,
+  isWsBlockShapeSet,
   labeledTriviaKindIndices,
   labeledTriviaRegexArms,
 } from './trivia-fast-path.ts'
@@ -238,12 +239,12 @@ function ensureTriviaFn(ctx: Ctx): string {
   const labeledSpec = analyzeLabeledTrivia(trivia)
   // Fast char-scan path. For UNLABELED trivia, any recognized shape set qualifies
   // (whole-run [start,end] capture, no per-arm kinds needed). For LABELED trivia
-  // the fast path can only emit per-chunk kinds for the ws+block shape; every
-  // other labeled shape (ws+line, ws+block+line) stays on the labeled-regex path
-  // below so its kind tags survive.
-  const fastCoversLabeled = !!kindIndices && !!fastShapes && fastShapes.blockComment && !fastShapes.lineComment
+  // the fast path can only emit per-chunk kinds for the ws-run + block-comment
+  // shape; every other labeled shape stays on the labeled-regex path below so its
+  // kind tags survive.
+  const fastCoversLabeled = !!kindIndices && !!fastShapes && isWsBlockShapeSet(fastShapes)
   if (fastShapes && (!labeledSpec || fastCoversLabeled)) {
-    ctx.namedFnDecls.push(buildFastTriviaFnDecl(fnName, fastShapes, kindIndices ?? undefined))
+    ctx.namedFnDecls.push(buildFastTriviaFnDecl(fnName, fastShapes, fastCoversLabeled ? kindIndices : undefined))
     return fnName
   }
 

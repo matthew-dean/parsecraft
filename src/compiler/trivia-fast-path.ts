@@ -2,31 +2,7 @@ import type { Combinator } from '../types.ts'
 import { getCoreRegexDef } from '../combinators/choice.ts'
 import type { LabeledTriviaSpec } from '../cst/trivia-kinds.ts'
 import { analyzeLabeledTrivia } from '../cst/trivia-kinds.ts'
-
-/**
- * Which scannable trivia shapes a fast-path loop must handle. Every shape here
- * is recognizable by a cheap 1–2 char test at the current position and is
- * mutually disjoint from the others on those chars, so a single char-scan loop
- * carries one branch per shape PRESENT — any combination, no arm-count limit.
- * `ws` is always required (there is no comment-only trivia).
- */
-export type TriviaFastShapes = { ws: true; blockComment: boolean; lineComment: boolean }
-
-const BLOCK_COMMENT = String.raw`\/\*(?:[^*]|\*(?!\/))*\*\/`
-
-/** `//`-to-end-of-line comment sources (both `[^\n\r]` orderings). */
-const LINE_COMMENT_SOURCES = new Set([
-  String.raw`\/\/[^\n\r]*`,
-  String.raw`\/\/[^\r\n]*`,
-])
-
-/** Regex sources for ASCII whitespace runs (incl. regexp-tree reorderings). */
-const WS_CLASS_SOURCES = new Set([
-  String.raw`[ \t\n\r\f]+`,
-  String.raw`[ \t\n]+`,
-  String.raw`[ \t]+`,
-  String.raw`[\t\n\f\r ]+`,
-])
+import { type ScanShape, parseScanShape, scanBranch } from './scannable-run.ts'
 
 function unwrapTrivia(p: Combinator<unknown>): Combinator<unknown> {
   let cur = p
@@ -46,61 +22,55 @@ function choiceArms(p: Combinator<unknown>): Combinator<unknown>[] | null {
   return null
 }
 
-function isWsClassSource(source: string): boolean {
-  return WS_CLASS_SOURCES.has(source)
-}
-
-function isBlockCommentSource(source: string): boolean {
-  return source === BLOCK_COMMENT
-}
-
-function isLineCommentSource(source: string): boolean {
-  return LINE_COMMENT_SOURCES.has(source)
+/** The scannable shape of one arm (a regex), or null if it isn't scannable. */
+function armShape(arm: Combinator<unknown>): ScanShape | null {
+  const src = getCoreRegexDef(arm)?.source
+  return src ? parseScanShape(src) : null
 }
 
 /**
- * Detect trivia shapes safe to lower to a hand-rolled char-scan loop in compiled
- * output. Accepts `oneOrMore(choice(ws, …))` where every arm is a scannable
- * shape (whitespace, `/* *​/` block comment, `//` line comment) — ANY count and
- * order, since those shapes are mutually disjoint on their first 1–2 chars so
- * one loop can branch per shape present. Also accepts a bare ws-class regex.
- * A single alternation regex is NOT one of these (one exec matches one arm per
- * call, defeating the loop) and returns null → the caller falls back to the
- * regex/generic trivia path.
+ * A trivia parser that lowers to a hand-rolled char-scan loop: `oneOrMore(choice(
+ * …))` (or `many`, min≥1) where EVERY arm is a scannable shape (a `[X]+` run, a
+ * `<lit>[^X]*` open-until-terminator, or a `<open>(?:…)*<close>` delimited token
+ * — see scannable-run.ts). Returns the per-arm shapes, or a single-element list
+ * for a bare scannable regex, or null (→ caller falls back to the regex/generic
+ * trivia path). A single alternation regex is NOT scannable (one exec matches one
+ * arm per call, defeating the loop).
  */
-export function analyzeTriviaFastPath(trivia: Combinator<unknown>): TriviaFastShapes | null {
+export function analyzeTriviaFastPath(trivia: Combinator<unknown>): ScanShape[] | null {
   const core = unwrapTrivia(trivia)
 
-  const direct = getCoreRegexDef(core)?.source
-  if (direct) {
-    if (isWsClassSource(direct)) return { ws: true, blockComment: false, lineComment: false }
-    return null
+  const directSrc = getCoreRegexDef(core)?.source
+  if (directSrc) {
+    const shape = parseScanShape(directSrc)
+    return shape && shape.kind === 'chars' ? [shape] : null
   }
 
   const inner = oneOrMoreInner(core)
   if (!inner) return null
 
-  const innerSrc = getCoreRegexDef(inner)?.source
-  if (innerSrc && isWsClassSource(innerSrc)) return { ws: true, blockComment: false, lineComment: false }
+  const innerShape = armShape(inner)
+  if (innerShape) return innerShape.kind === 'chars' ? [innerShape] : null
 
   const arms = choiceArms(inner)
   if (!arms || arms.length < 2) return null
 
-  let hasWs = false
-  let blockComment = false
-  let lineComment = false
+  const shapes: ScanShape[] = []
   for (const arm of arms) {
-    const src = getCoreRegexDef(arm)?.source
-    if (!src) return null
-    if (isWsClassSource(src)) hasWs = true
-    else if (isBlockCommentSource(src)) blockComment = true
-    else if (isLineCommentSource(src)) lineComment = true
-    else return null
+    const shape = armShape(arm)
+    if (!shape) return null
+    shapes.push(shape)
   }
-  // Whitespace is the base; a comment-only choice never occurs and the loop
-  // below assumes ws is present as its first branch.
-  if (!hasWs) return null
-  return { ws: true, blockComment, lineComment }
+  return shapes
+}
+
+/** True for the ws-run + block-delimited 2-shape set the labeled path can kind-tag. */
+export function isWsBlockShapeSet(shapes: ScanShape[]): boolean {
+  return (
+    shapes.length === 2 &&
+    shapes.some(s => s.kind === 'chars') &&
+    shapes.some(s => s.kind === 'delimited')
+  )
 }
 
 const CAP_RECORD = [
@@ -110,38 +80,12 @@ const CAP_RECORD = [
   `  }`,
 ].join('\n')
 
-// Per-shape scan branches, each dispatched on the current char `c`. Composed
-// into one loop by `composeFastLoop` — one branch per shape present.
-const WS_BRANCH = `    if (c === 32 || c === 9 || c === 10 || c === 13 || c === 12) { _e++; continue }`
-const BLOCK_BRANCH = [
-  `    if (c === 47 && input.charCodeAt(_e + 1) === 42) {`,
-  `      let j = _e + 2`,
-  `      while (j + 1 < input.length && !(input.charCodeAt(j) === 42 && input.charCodeAt(j + 1) === 47)) j++`,
-  `      _e = j + 2 <= input.length ? j + 2 : input.length`,
-  `      continue`,
-  `    }`,
-].join('\n')
-// `//` to end-of-line: stop at CR or LF (matches `\/\/[^\n\r]*`).
-const LINE_BRANCH = [
-  `    if (c === 47 && input.charCodeAt(_e + 1) === 47) {`,
-  `      let j = _e + 2`,
-  `      while (j < input.length && input.charCodeAt(j) !== 10 && input.charCodeAt(j) !== 13) j++`,
-  `      _e = j`,
-  `      continue`,
-  `    }`,
-].join('\n')
-
-/** One char-scan loop carrying a branch per present shape (ws always first). */
-function composeFastLoop(shapes: TriviaFastShapes): string {
-  const branches = [
-    WS_BRANCH,
-    shapes.blockComment ? BLOCK_BRANCH : '',
-    shapes.lineComment ? LINE_BRANCH : '',
-  ].filter(Boolean)
+/** One char-scan loop carrying a branch per scannable shape, dispatched on `c`. */
+function composeFastLoop(shapes: ScanShape[]): string {
   return [
     `  while (_e < input.length) {`,
     `    const c = input.charCodeAt(_e)`,
-    ...branches,
+    ...shapes.map(scanBranch),
     `    break`,
     `  }`,
   ].join('\n')
@@ -186,14 +130,14 @@ const WS_COMMENTS_LOOP_LABELED = (wsKind: number, commentKind: number) => [
 /** Emit a specialized `_tfN` that skips trivia without regex / combinator dispatch. */
 export function buildFastTriviaFnDecl(
   fnName: string,
-  shapes: TriviaFastShapes,
+  shapes: ScanShape[],
   kindIndices?: { ws: number; comment: number },
 ): string {
-  // Labeled path: only the ws + block-comment shape emits per-chunk kind
-  // indices today (the labeled kind analysis is 2-arm; a labeled 3-arm trivia
-  // never reaches here — the caller keeps it on the labeled-regex path). Every
-  // other shape uses the non-labeled composed loop + whole-run CAP_RECORD.
-  const useLabeled = !!kindIndices && shapes.blockComment && !shapes.lineComment
+  // Labeled path: only the ws-run + block-comment shape emits per-chunk kind
+  // indices today (the labeled kind analysis is 2-arm; the caller passes
+  // kindIndices only for that shape — see ensureTriviaFn). Every other shape set
+  // uses the non-labeled composed loop + whole-run CAP_RECORD.
+  const useLabeled = !!kindIndices && isWsBlockShapeSet(shapes)
   const loop = useLabeled
     ? WS_COMMENTS_LOOP_LABELED(kindIndices!.ws, kindIndices!.comment)
     : composeFastLoop(shapes)

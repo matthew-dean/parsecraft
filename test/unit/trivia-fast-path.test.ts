@@ -15,20 +15,25 @@ describe('trivia fast path — detection', () => {
   const comment = regex(/\/\*(?:[^*]|\*(?!\/))*\*\//)
 
   const lineComment = regex(/\/\/[^\n\r]*/)
+  const kinds = (rw: ReturnType<typeof trivia>) =>
+    analyzeTriviaFastPath(rw)?.map(s => s.kind) ?? null
 
   it('detects CSS rw shape (ws + block comment)', () => {
-    const rw = trivia(oneOrMore(choice(ws, comment)))
-    expect(analyzeTriviaFastPath(rw)).toEqual({ ws: true, blockComment: true, lineComment: false })
+    expect(kinds(trivia(oneOrMore(choice(ws, comment))))).toEqual(['chars', 'delimited'])
   })
 
   it('detects Less rw shape (ws + block + line comment, 3 arms)', () => {
-    const rw = trivia(oneOrMore(choice(ws, comment, lineComment)))
-    expect(analyzeTriviaFastPath(rw)).toEqual({ ws: true, blockComment: true, lineComment: true })
+    expect(kinds(trivia(oneOrMore(choice(ws, comment, lineComment))))).toEqual(['chars', 'delimited', 'until'])
   })
 
   it('detects ws + line-comment only', () => {
-    const rw = trivia(oneOrMore(choice(ws, lineComment)))
-    expect(analyzeTriviaFastPath(rw)).toEqual({ ws: true, blockComment: false, lineComment: true })
+    expect(kinds(trivia(oneOrMore(choice(ws, lineComment))))).toEqual(['chars', 'until'])
+  })
+
+  it('derives a char-class run structurally (any class, not a hardcoded ws set)', () => {
+    // digits: not whitespace, still lowers to a char-scan run.
+    const shapes = analyzeTriviaFastPath(trivia(oneOrMore(regex(/[0-9]+/))))
+    expect(shapes).toEqual([{ kind: 'chars', ranges: [[48, 57]] }])
   })
 
   it('does not fast-path merged alternation regex (one arm per parse)', () => {
@@ -37,15 +42,17 @@ describe('trivia fast path — detection', () => {
   })
 
   it('detects ws-only trivia', () => {
-    expect(analyzeTriviaFastPath(trivia(regex(/[ \t]+/)))).toEqual({ ws: true, blockComment: false, lineComment: false })
-    expect(analyzeTriviaFastPath(trivia(oneOrMore(ws)))).toEqual({ ws: true, blockComment: false, lineComment: false })
+    expect(kinds(trivia(regex(/[ \t]+/)))).toEqual(['chars'])
+    expect(kinds(trivia(oneOrMore(ws)))).toEqual(['chars'])
   })
 
   it('returns null for non-matching trivia', () => {
+    // `\s+` is a shorthand class the char-class parser doesn't model → null.
     expect(analyzeTriviaFastPath(trivia(regex(/\s+/)))).toBeNull()
+    // a direct non-run regex (leading `#` literal) is not a bare char-class run.
     expect(analyzeTriviaFastPath(trivia(regex(/#[0-9a-f]+/)))).toBeNull()
-    // an unrecognized third arm disqualifies the whole choice
-    expect(analyzeTriviaFastPath(trivia(oneOrMore(choice(ws, comment, regex(/#[0-9a-f]+/)))))).toBeNull()
+    // an escape-aware string arm is rejected (scan-to-close would be wrong)
+    expect(analyzeTriviaFastPath(trivia(oneOrMore(choice(ws, regex(/'(?:[^'\\]|\\.)*'/)))))).toBeNull()
   })
 })
 

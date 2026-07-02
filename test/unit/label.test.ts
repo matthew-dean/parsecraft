@@ -33,7 +33,7 @@ describe('label()', () => {
       label('whitespace', regex(/[ \t\n\r\f]+/)),
       label('blockComment', regex(/\/\*(?:[^*]|\*(?!\/))*\*\//)),
     )))
-    expect(analyzeTriviaFastPath(rw)).toEqual({ ws: true, blockComment: true, lineComment: false })
+    expect(analyzeTriviaFastPath(rw)?.map(s => s.kind)).toEqual(['chars', 'delimited'])
     expect(labeledTriviaKindIndices(rw)).toEqual({ ws: 0, comment: 1 })
   })
 
